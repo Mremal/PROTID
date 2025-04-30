@@ -7,10 +7,6 @@ output:
   pdf_document: default
   word_document: default
 ---
-#gigigigigigigiug
-```{r}
-
-```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
