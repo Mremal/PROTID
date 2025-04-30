@@ -1,0 +1,63 @@
+---
+title: "Cardiovascular risk"
+author: "Lucy Mrema"
+date: "2023-05-09"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load the Excel file
+```{r}
+library(readxl)
+
+Metadata_clean <- read_excel("D:/Trainings/PhD/Analysis/Metadata_clean2.xlsx")
+colnames(Metadata_clean)
+
+```
+
+WHO risk scores
+```{r}
+library(whoishRisk)
+
+str(Metadata_clean)
+Metadata_clean$Total_Cholesterol<- as.numeric(Metadata_clean$Total_Cholesterol)
+
+# Round Total_Cholesterol to two decimal places using round function
+Metadata_clean$Total_Cholesterol <- round(Metadata_clean$Total_Cholesterol, digits = 2)
+
+# Load risk factor data
+Age <- Metadata_clean$Age  # Age in years
+gdr <- Metadata_clean$Gender_N  # 0 = female, 1 = male
+smk <- Metadata_clean$Smoking  # 0 = non-smoker, 1 = smoker
+sbp <- Metadata_clean$anth_sbp  # SBP in mmHg
+Diabetes <- rep(1, length(Age))  # All individuals are assigned as diabetic
+chl <- Metadata_clean$Total_Cholesterol
+# Total cholesterol (mmol/L, 0 = unknown cholesterol)
+subregion <- "AFR_E"
+
+# Pass the risk factor vectors to the WHO_ISH_Risk() function, and set subregion equal to the name of the appropriate epidemiological subregion (e.g., "EMR_B"). This will return a vector of WHO/ISH risk scores.
+Riskscores <- WHO_ISH_Risk (Age, gdr, smk, sbp, Diabetes, chl, subregion = "AFR_E")
+
+# Add the "CV_Risk" column to the "Metadata_clean" data set
+Metadata_clean$CV_Risk <- Riskscores
+
+
+colnames(Metadata_clean)
+```
+Saving the excel
+```{r}
+library(openxlsx)
+
+write.xlsx(Metadata_clean, "D:/Trainings/PhD/Analysis/Metadata_clean2.xlsx")
+```
+
+
+
+
