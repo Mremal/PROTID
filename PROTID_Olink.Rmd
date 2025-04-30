@@ -1,0 +1,357 @@
+---
+title: "PROTID_Olink"
+author: "Lucy"
+date: "2023-05-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## 1.1 Set directory and load libraries
+```{r}
+  ###data_dir <- "D:\Trainings\PhD\Data\Olink\Figures"
+  output_dir <- "D:/Trainings/PhD/Data/Olink/Figures"
+```
+
+
+#1. Data pre-processing 
+1.1 Loading data and subsetting PROTID IDs
+```{r}
+library("readxl")
+
+PROTID_Olinkmain <-read_excel("D:/Trainings/PhD/Data/Proteomic_Analysis/Protid study_NPX_Clean.xlsx")### 271 Observations 95 variables 
+
+## Remove controls from Olink and 300FG; leave in LOD, QCwarning and Plate id
+# Load the "dplyr" package for data manipulation
+library(dplyr)
+
+# Filter for rows with specific "PID" values and include additional columns
+PROTID_Olink <- PROTID_Olinkmain %>%
+  filter(grepl("^13|^14|LOD", PID)) %>%
+  select(PID, Plate_ID, QC_Warning, everything())
+
+# Print the updated dataset
+print(PROTID_Olink)
+```
+
+
+
+#2. Quality control
+2.1 Calculate of % of missing values per protein in the dataset
+```{r}
+library(dplyr)
+
+# Calculate the percentage of NA values in the "IL8" column
+na_percentage <- sum(is.na(PROTID_Olink$IL8)) / nrow(PROTID_Olink) * 100
+
+# Print the result
+print(na_percentage)
+
+# Calculate the percentage of NA values for all columns
+na_percentage <- PROTID_Olink %>%
+  summarise(across(everything(), ~ sum(is.na(.)), .names = "NA_{.col}"))
+
+# Print the result
+print(na_percentage)
+```
+
+
+In long format
+```{r}
+# Load the required packages
+library(dplyr)
+library(broom)
+
+# Calculate the percentage of NA values for all columns
+na_percentage <- PROTID_Olink %>%
+  summarise(across(everything(), ~ sum(is.na(.)) / n() * 100, .names = "NA_{.col}")) %>%
+  tidy()
+
+# Print the result
+print(na_percentage)
+```
+Which rows have NA?
+```{r}
+# Load the "dplyr" package for data manipulation
+library(dplyr)
+
+# Identify rows with NA values in any column
+na_rows <- PROTID_Olink %>%
+  filter(rowSums(is.na(.)) > 0)
+
+# Print the result
+print(na_rows)
+```
+
+Drop the above IDs that have missing values for all the proteins
+```{r}
+# Drop rows with specific "PID" values
+PROTID_Olink <- PROTID_Olink %>%
+  filter(!(PID %in% c("130118", "140119")))
+
+# Print the updated dataset
+print(PROTID_Olink)### 242 IDS
+```
+
+2.2 Calculate batch effect and stratify by site 13 Moshi 14 Mbeya
+```{r}
+## 5.1 Detect batch effect between plates
+
+ PROTID_Olink$Plate_ID <- as.factor(PROTID_Olink$Plate_ID)
+library(ggbiplot)
+library(RColorBrewer)
+
+  pca_df <- PROTID_Olink[-242,c(2,4:95)]
+  prin_comp <- prcomp(pca_df[,-1], center = T,scale. = T)
+  
+  mycolor = colorRampPalette(brewer.pal(4, "Paired"))(length(unique( pca_df$Plate_ID)))
+  ggbiplot(prin_comp, obs.scale = 1, var.scale = 1,
+                groups = as.factor( pca_df$Plate_ID),
+                circle = F, ellipse = T, var.axes = F)+
+    scale_color_manual(values = mycolor,
+                        name="Plates")+
+    theme(legend.direction = 'horizontal',
+          legend.position = 'top')+
+    theme_bw(base_size=10)
+```
+  
+####By site
+
+```{r}
+# Create new column "Site"
+PROTID_Olink$Site <- ifelse(substr(PROTID_Olink$PID, 1, 2) == "13", "Moshi",
+                            ifelse(substr(PROTID_Olink$PID, 1, 2) == "14", "Mbeya", NA))
+print(PROTID_Olink$Site)
+
+PROTID_Olink$Site <- as.factor(PROTID_Olink$Site)
+library(ggbiplot)
+library(RColorBrewer)
+
+  pca_df <- PROTID_Olink[-242, c(96, 4:95)]
+prin_comp <- prcomp(pca_df[, -1], center = TRUE, scale. = TRUE)
+
+mycolor <- colorRampPalette(brewer.pal(4, "Paired"))(length(unique(pca_df$Site)))
+ggbiplot(prin_comp, obs.scale = 1, var.scale = 1,
+         groups = as.factor(pca_df$Site),
+         circle = FALSE, ellipse = TRUE, var.axes = FALSE) +
+  scale_color_manual(values = mycolor, name = "Site") +
+  theme(legend.direction = "horizontal", legend.position = "top") +
+  theme_bw(base_size = 10)
+
+```
+2.21
+```{r}
+
+```
+
+
+
+
+
+
+2.3 Remove plate column, Site
+```{r}
+PROTID_Olink <- PROTID_Olink %>% select(!Plate_ID)
+PROTID_Olink <- PROTID_Olink %>% select(!Site)
+```
+
+
+2.4 Protein data with high % value below limit of detection
+```{r, fig.width=15, fig.height=10}
+# Calculate percentage value below lod
+  percent_lod_count <- data.frame(matrix(NA,nrow=92,ncol = 1))
+  colnames(percent_lod_count) <- "Percentage_below_lod"
+  percent_lod_count$Proteins <- colnames(PROTID_Olink)[3:94]
+      
+  df <- PROTID_Olink[-242,c(3:94)]
+  lod <- PROTID_Olink[242,c(3:94)]
+      
+  
+for (i in 1:ncol(df)) {
+  for (j in 1:ncol(lod)) {
+    if (colnames(df)[i] == colnames(lod)[j]) {
+      percent_lod_count[j, 1] <- round((sum(df[[i]] < lod[[j]], na.rm = TRUE) / sum(!is.na(df[[i]]))) * 100, digits = 1)
+    }
+  }
+}
+
+    
+#Order the data based on % value below LOD    
+  df_qc_1 <- percent_lod_count[,c(2,1)] %>% 
+             arrange(desc(Percentage_below_lod))
+
+  # Visualisation
+library(ggpubr)
+library(forcats)
+    
+  theme_set(theme_pubclean())
+  df_qc_1 %>% mutate(Proteins = fct_reorder(Proteins,Percentage_below_lod), .desc=F) %>%
+        ggplot(aes(Proteins, Percentage_below_lod)) +
+        geom_linerange(
+          aes(x = Proteins, ymin = 0, ymax = Percentage_below_lod),
+          color = "blue4", size = 1.5,
+          position = position_dodge(0.3)
+        )+
+        geom_text(
+          aes(label = ifelse(Percentage_below_lod >= 25.0,
+                             paste0(Percentage_below_lod,"%"),"")),
+          position = position_dodge(0.8),
+          vjust = -0.3, size = 2.5
+        )+
+        xlab("Olink inflammatory panel") + 
+        ylab("Percentage of lower detection limit measurements")+ 
+        theme(axis.text.x=element_text(angle=90, hjust=1, size = 4))
+  
+```
+
+
+2.5 Filter protein data with >= 25% % value below limit of detection
+```{r}
+
+# Filter protein data with >= 25% % value below limit of detection
+  exclude_proteins <- df_qc_1$Proteins[df_qc_1$Percentage_below_lod>=25]
+  exclude_proteins #15 Proteins
+  
+ PROTID_Olink <- PROTID_Olink %>% 
+                  select(!all_of(exclude_proteins)) %>%
+                  filter(!PID == "LOD")#### 241 observations 77 Proteins 
+```
+
+
+
+2.6 QC warning and outlier detection
+```{r}
+# QC warning
+  rownames(PROTID_Olink) <- PROTID_Olink$PID
+  prin_comp <- prcomp(PROTID_Olink[,-c(1,2)], center = T,scale. = T)
+
+  ggbiplot(prin_comp, obs.scale = 1, var.scale = 1, 
+                labels = PROTID_Olink$PID,
+                groups = PROTID_Olink$QC_Warning, 
+                ellipse = TRUE, circle = F, var.axes = F)+
+        scale_color_manual(values=c("goldenrod3","blue4"),
+                           name="Sample with QC warning") +
+        theme(legend.direction = 'horizontal', 
+                     legend.position = 'top')+
+        theme_bw(base_size=10)
+```
+
+
+2.7 Outlier detection
+```{r}
+# Outliers detection
+# Based on certain threshold (3 SD from mean of PC1 and PC2)
+  
+  Outlier_check_combined <- prin_comp$x
+  out <- apply(Outlier_check_combined, 2, function(x) which(abs(x - mean(x)) > 
+                                                              (3 * sd(x)) ))[1:2]
+  outliers <- unique(sub("^....", "", names(unlist(out, use.names=T))))
+  
+  # Draw another PCA to visualize the outliers
+  df_pca <- PROTID_Olink %>%
+            mutate(Outliers=ifelse(PID %in% outliers,"Yes","No"))
+  
+  prin_comp <- prcomp(df_pca[,-c(1,2)], center = T,scale. = T)
+
+  ggbiplot(prin_comp, obs.scale = 1, var.scale = 1, 
+                labels = df_pca$PID,
+                groups = df_pca$Outliers, 
+                ellipse = F, circle = F, var.axes = F)+
+        scale_color_manual(values=c("goldenrod3","blue4"),name="Outliers") +
+        theme(legend.direction = 'horizontal', 
+                     legend.position = 'top')+
+        theme_bw(base_size=10)
+```
+
+
+Remove the QC waring column
+```{r}
+PROTID_Olink <- PROTID_Olink %>% select(!QC_Warning)#78 variables
+```
+
+
+
+2.8 Distribution of the proteomics data
+```{r, fig.height=25, fig.width=25}
+##Histogram and correlation of proteomic data
+
+library(reshape2)
+library(corrplot)
+library(ggplot2)
+
+# Histogram plot
+  df_hist <- melt(PROTID_Olink[,c(2:78)])
+  ggplot(df_hist, aes(value)) +
+    geom_density(alpha=.5, fill="goldenrod3") +
+    facet_wrap(~variable, scales = 'free', nrow = 10)+
+    theme_minimal()
+  
+ggsave(paste0(output_dir,"Normalised.pdf")
+  , plot = last_plot(), device = NULL, path = NULL,
+    scale = 1, width = 25, height = 25, units = 'in', dpi = 300)
+```
+
+2.9 correlation plot
+````{r, fig.height=12, fig.width=12}
+# Make a correlation plot
+library(corrplot)
+#install.packages("psych")
+library(psych)
+
+  cor_df <- PROTID_Olink[,-1]
+  df <-  psych::corr.test(cor_df, cor_df, adjust = "fdr", method = "pearson")
+  df_p <- df$p
+  df_r <- df$r
+
+  #plot.new()
+  col <- colorRampPalette(c("blue4", "white", "red4"))
+  pdf(paste0(output_dir, 'Correlation.pdf'), width = 12, height = 12)
+  corrplot(as.matrix(df_r), p.mat=as.matrix(df_p), method = "color",
+           sig.level = c(.0001, .001, .05), pch.cex = .9, col=col(100),
+           insig = "label_sig", pch.col = "black", tl.col = "black", cex.main = 1,
+           mar = c(1,0,3,1), main="", order = "hclust", hclust.method= "complete",
+           addrect = 4)
+  
+    pdf(paste0(output_dir,'Correlation.pdf'),
+    width = 12, height =12)
+```
+
+
+
+PCA of all the proteins without the clinical variables. 
+```{r}
+ prin_comp <- prcomp(PROTID_Olink[,c(2:93)], center = T, scale. = T)
+
+  ggbiplot(prin_comp, obs.scale = 1, var.scale = 1, 
+                ellipse = F, circle = F, var.axes = F)+
+        theme(legend.direction = 'horizontal', 
+              legend.position = 'top')+
+        theme_bw(base_size=10)
+
+```
+
+###save the rds file 
+```{r}
+##saveRDS(PROTID_Olink, "PROTID_Olink2.rds")
+POlink_clean <- readRDS("D:/Trainings/PhD/Data/Proteomic_Analysis/PROTID_Olink2.rds")
+```
+
+
+
+Merging with the clinical variables...........................
+```{r}
+# Merge proteomic data with metadata (total 311 participants)
+
+ Metadata_clean241 <- readRDS("D:/Trainings/PhD/Analysis/Metadata_clean241.rds")
+ PROTID_Olink2 <- readRDS("PROTID_Olink2.rds")
+
+  dat_de_master <- merge(Metadata_clean241,PROTID_Olink2,by.0="PID") 
+  dim(dat_de_master)
+  
+  saveRDS(dat_de_master, "Merged.rds")
+
+```
+
