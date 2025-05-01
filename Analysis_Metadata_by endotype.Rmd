@@ -1,0 +1,956 @@
+---
+title: "Analysis_Metadata"
+author: "Lucy"
+date: "2023-05-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load the RDS file
+```{r}
+# Read the RDS file with full file path
+dat_de_master_endo <- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+```
+
+
+Summary statistics
+```{r}
+## library to be used 
+library(dplyr) 
+unique(dat_de_master_endo$Cluster)
+
+# Convert the Cluster column to character
+dat_de_master_endo$Cluster <- as.character(dat_de_master_endo$Cluster)
+
+# Drop rows where Cluster is "Endotype B" and save the result in subset_data
+subset_data <- subset(dat_de_master_endo, Cluster %in% c("Endotype A", "Endotype C"))
+ 
+                           # OR 
+
+## To calculate the differences between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype B"
+subset_data <- dat_de_master_endo %>%
+  filter(Cluster != "Endotype B")
+
+                           # OR
+
+subset_data <- dat_de_master_endo %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+table(subset_data$Cluster)
+
+subset_data$Cluster
+```
+
+site 
+```{r}
+library()
+dat_de_master_endo %>%
+  group_by(`Cluster`) %>%
+  count(`Site Abbreviation`) %>%
+  mutate(percent = n/sum(n) * 100)
+
+result <- dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(`Site Abbreviation`) %>%
+  mutate(percent = n/sum(n) * 100) %>%
+  ungroup()
+
+print(result)
+
+# Calculate the chi-square test
+p_value <- chisq.test(result$n, correct = FALSE)$p.value
+
+print(p_value)
+```
+
+
+
+
+
+CV risk
+```{r}
+dat_de_master_endo %>%
+  group_by(`Cluster`) %>%
+  count(CV_Risk) %>%
+  mutate(percent = n/sum(n) * 100)
+
+## Pvalue
+result <- dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(CV_Risk) %>%
+  mutate(percent = n/sum(n) * 100) %>%
+  ungroup()
+
+print(result)
+
+# Calculate the chi-square test
+p_value <- chisq.test(result$n, correct = FALSE)$p.value
+
+print(p_value)
+
+# Perform Fisher's exact test for proportions
+fisher_result <- fisher.test(table(subset_data$Cluster, subset_data$CV_Risk))
+
+
+# Extract the p-value from the test result
+p_value <- fisher_result$p.value
+print(p_value)
+
+```
+
+
+Sex
+```{r}
+## for 3 endotypes 
+dat_de_master_endo %>%
+  group_by(`Cluster`) %>%
+  count(dem_sex) %>%
+  mutate(percent = n/sum(n) * 100)
+
+result <- dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(dem_sex) %>%
+  mutate(percent = n/sum(n) * 100) %>%
+  ungroup()
+
+library(dplyr)
+
+
+# Create a contingency table for chi-square test
+cont_table <- table(result$Cluster, result$dem_sex)
+print(cont_table)
+
+# Perform chi-square test
+chi_sq_result <- chisq.test(cont_table)
+
+# Extract the p-value
+p_value <- chi_sq_result$p.value
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype B"
+dat_de_master_endo$Cluster <-  as.character(dat_de_master_endo$Cluster)
+str(subset_data$Cluster)
+
+library(dplyr)
+subset_data <- dat_de_master_endo %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$dem_sex)
+print(cont_table)
+
+# Perform Chisq's exact test ############   ,,,,n=5 use chisq
+chisq_test_result <- chisq.test(cont_table)
+
+# Extract the p-value
+print(chisq_test_result)
+
+```
+
+
+Age
+```{r}
+## for all the 3 endotypes
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(dem_age),
+            q1 = quantile(dem_age, probs = 0.25),
+            q3 = quantile(dem_age, probs = 0.75),
+            iqr = IQR(dem_age))
+####Pvalue
+library(dplyr)
+## Age is normally distributed; since the sample size might be small we performed a shapiro test. 
+shapiro.test(dat_de_master_endo$dem_age)
+
+result <- dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(dem_age),
+            q1 = quantile(dem_age, probs = 0.25),
+            q3 = quantile(dem_age, probs = 0.75),
+            iqr = IQR(dem_age))
+
+# Perform ANOVA
+anova_result <- aov(dem_age ~ Cluster, data = dat_de_master_endo)
+
+# Extract the p-value from the ANOVA result
+p_value <- summary(anova_result)[[1]]$`Pr(>F)`[1]
+print(p_value)
+
+## between endotype A and Endotype C
+# Perform a two-sample t-test since sample size is not too small i.e >40
+t_test_result <- t.test(dem_age ~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- t_test_result$p.value
+p_value
+
+```
+
+DM duration
+```{r}
+library(dplyr)
+
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(dm_dur_in_years),
+            q1 = quantile(dm_dur_in_years, probs = 0.25),
+            q3 = quantile(dm_dur_in_years, probs = 0.75),
+            iqr = IQR(dm_dur_in_years))
+
+shapiro.test(dat_de_master_endo$dm_dur_in_years) ##normally distributed
+
+# Perform ANOVA
+anova_result <- aov(dm_dur_in_years ~ Cluster, data = dat_de_master_endo)
+
+# Extract the p-value from the ANOVA result
+p_value <- summary(anova_result)[[1]]$`Pr(>F)`[1]
+print(p_value)
+
+## between endotype A and Endotype C
+# Perform a two-sample t-test since sample size is not too small i.e >40
+wilcoxon_test_result <- wilcox.test(dm_dur_in_years  ~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- wilcoxon_test_result$p.value
+
+```
+
+
+DM complications
+Foot amp
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_foot_amp) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_foot_amp))$p.value
+p_value
+
+```
+Retinopathy 
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_diab_eye) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_diab_eye))$p.value
+p_value
+
+```
+Kidney disease
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_kid_disease) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_kid_disease))$p.value
+p_value
+```
+Peripheral neuropathy 
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_per_neur) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_per_neur))$p.value
+p_value
+```
+Hypertension
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_hype) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_hype))$p.value
+p_value
+```
+Stroke
+```{r}
+dat_de_master_endo%>%
+  group_by(Cluster)%>%
+  count(dm_stroke) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$dm_stroke))$p.value
+p_value
+```
+Medications use
+Insulin
+```{r}
+dat_de_master_endo%>%
+   group_by(Cluster)%>%
+  count(con_Insulin) %>%
+ mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$con_Insulin))$p.value
+p_value
+
+#### BY ENDOTYPES A VS C
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$con_Insulin)
+
+# Perform Fisher's exact test
+fisher_test_result <- fisher.test(cont_table)
+
+# Extract the p-value
+p_value <- fisher_test_result$p.value
+
+print(p_value)
+```
+
+Metformin
+```{r}
+dat_de_master_endo%>%
+   group_by(Cluster)%>%
+  count(con_Metformin) %>%
+ mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$con_Metformin))$p.value
+p_value
+
+#### BY ENDOTYPES A VS C
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$con_Metformin)
+
+# Perform Fisher's exact test
+fisher_test_result <- fisher.test(cont_table)
+
+# Extract the p-value
+p_value <- fisher_test_result$p.value
+
+print(p_value)
+
+```
+SUs
+```{r}
+dat_de_master_endo%>%
+   group_by(Cluster)%>%
+  count(con_su_der) %>%
+ mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$con_su_der))$p.value
+p_value
+
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$con_su_der)
+
+# Perform Fisher's exact test
+fisher_test_result <- fisher.test(cont_table)
+
+# Extract the p-value
+p_value <- fisher_test_result$p.value
+
+print(p_value)
+```
+
+Other dm medication
+```{r}
+dat_de_master_endo%>%
+   group_by(Cluster)%>%
+  count(con_other_aDmed) %>%
+ mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$con_other_aDmed))$p.value
+p_value
+
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$con_other_aDmed)
+
+# Perform Fisher's exact test
+fisher_test_result <- fisher.test(cont_table)
+
+# Extract the p-value
+p_value <- fisher_test_result$p.value
+
+print(p_value)
+```
+No use of any medications
+```{r}
+dat_de_master_endo%>%
+   group_by(Cluster)%>%
+  summarise(count_no_medication = sum(con_Metformin == "No" & con_Insulin == "No" & con_su_der == "No" & con_other_aDmed == "No"),
+            percent = count_no_medication / n() * 100)
+
+.............................................................................
+
+result <- dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(count_no_medication = sum(con_Metformin == "No" & con_Insulin == "No" & con_su_der == "No" & con_other_aDmed == "No"),
+            percent = count_no_medication / n() * 100)
+
+p_value <- chisq.test(result$count_no_medication)$p.value
+
+p_value
+
+
+```
+
+
+HbA1c and HbA1c categorical
+```{r}
+dat_de_master_endo$HbA1c_value <- as.numeric(dat_de_master_endo$HbA1c_value)
+
+sum(is.na(dat_de_master_endo$HbA1c_value)) #122 have missing values they are cohort
+dat_de_master_endo$HbA1c_value[dat_de_master_endo$HbA1c_value == -99] <- NA -99 #-99 is when the test was not done
+
+sum(is.na(dat_de_master_endo$HbA1c_value)) #138 total missing
+
+##summary statistics for Hb A1c
+
+mean_hba1c <- mean(dat_de_master_endo$HbA1c_value, na.rm = TRUE)
+mean_hba1c
+quantile(dat_de_master_endo$HbA1c_value, probs = c(0.25, 0.75), na.rm = TRUE)
+IQR_hba1c <- IQR(dat_de_master_endo$HbA1c_value, na.rm = TRUE)
+IQR_hba1c
+
+library(dplyr)
+
+dat_de_master_endoHbA1c <- dat_de_master_endo %>% 
+  filter(!is.na(HbA1c_value)) %>% # drop missing values
+  mutate(HbA1c_cat = case_when(
+    HbA1c_value < 7 ~ "<7",
+    HbA1c_value >= 7 & HbA1c_value <= 10 ~ "7-10",
+    HbA1c_value > 10 ~ ">10"
+  )) # create new variable with 3 categories 103 patients
+
+dat_de_master_endoHbA1c %>%
+  group_by(Cluster) %>%
+  count(HbA1c_cat) %>%
+  mutate(percent = n/sum(n) * 100)
+
+result <- dat_de_master_endoHbA1c %>%
+  group_by(Cluster) %>%
+  count(HbA1c_cat) %>%
+  mutate(percent = n/sum(n) * 100)
+
+result <- subset(result, Cluster %in% c("Endotype A", "Endotype C"))
+
+# Perform chi-square test
+ftest <- fisher.test(table(result$Cluster, result$HbA1c_cat))
+
+# Extract the p-value
+p_value <- ftest$p.value
+
+p_value
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype C"
+subset_data2 <- dat_de_master_endoHbA1c %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+# Create a contingency table
+cont_table <- table(subset_data2$HbA1c_cat, subset_data2$Cluster)
+
+# Perform Fisher's exact test for proportions
+fisher_result <- fisher.test(cont_table)
+
+# Extract the p-value from the test result
+p_value <- fisher_result$p.value
+
+print(p_value)
+
+...........................................................................................
+dat_de_master_endoHbA1c %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(HbA1c_value),
+            q1 = quantile(HbA1c_value, probs = 0.25),
+            q3 = quantile(HbA1c_value, probs = 0.75),
+            iqr = IQR(HbA1c_value))
+
+# Check for normality
+shapiro.test(dat_de_master_endoHbA1c$HbA1c_value) ##nornally distributed
+
+model <- lm(HbA1c_value ~ Cluster, data = dat_de_master_endoHbA1c)
+anova(model)
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype C"
+subset_data2 <- dat_de_master_endoHbA1c %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+# Perform a Wilcoxon rank-sum test
+wilcoxon_test_result <- wilcox.test(HbA1c_value ~ Cluster, data = subset_data2, exact = FALSE)### since there are ties I add the exact=FALSE
+
+
+# Extract the p-value
+p_value <- wilcoxon_test_result$p.value
+
+# Print the p-value
+print(p_value)
+
+```
+
+
+Visceral fat and total fat
+```{r}
+
+library(dplyr)
+sum(is.na(dat_de_master_endo$visceralfat_lev)) 
+dat_de_master_endo$visceralfat_lev[dat_de_master_endo$visceralfat_lev%in% c(-95, -96, -99)] <- NA
+sum(is.na(dat_de_master_endo$visceralfat_lev)) ##5 variables with -95 or -99 or -96
+
+dat_de_master_endo$visceralfat_lev <- as.numeric(dat_de_master_endo$visceralfat_lev)
+
+dat_de_master_endo %>%
+  filter(!is.na(visceralfat_lev)) %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(visceralfat_lev),
+            q1 = quantile(visceralfat_lev, probs = 0.25),
+            q3 = quantile(visceralfat_lev, probs = 0.75),
+            iqr = IQR(visceralfat_lev))
+
+# Check for normality
+shapiro.test(dat_de_master_endo$visceralfat_lev)
+
+model <- lm(visceralfat_lev ~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+# Perform Kruskal-Wallis test (due to similarity between distribution of the two groups but abnormal sitributon)
+kruskal_test_result <- kruskal.test(visceralfat_lev~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+
+```
+
+Total body fat
+```{r}
+sum(is.na(dat_de_master_endo $body_fat)) 
+dat_de_master_endo $body_fat[dat_de_master_endo $body_fat%in% c(-95, -96, -99)] <- NA
+sum(is.na(dat_de_master_endo $body_fat)) ##5 variables with -95 or -99 or -96
+
+dat_de_master_endo $body_fat <- as.numeric(dat_de_master_endo $body_fat)
+
+dat_de_master_endo %>%
+  filter(!is.na(body_fat)) %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(body_fat),
+            q1 = quantile(body_fat, probs = 0.25),
+            q3 = quantile(body_fat, probs = 0.75),
+            iqr = IQR(body_fat))
+
+# Check for normality
+shapiro.test(dat_de_master_endo$body_fat)
+
+model <- lm(body_fat ~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+# Perform Kruskal-Wallis test (due to similarity between distribution of the two groups but abnormal sitributon)
+kruskal_test_result <- kruskal.test(body_fat~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+
+
+```
+
+
+Anthropometrics
+```{r}
+### MUAC
+
+dat_de_master_endo$anth_upperarm <- as.numeric(dat_de_master_endo$anth_upperarm)
+
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(anth_upperarm),
+            q1 = quantile(anth_upperarm, probs = 0.25),
+            q3 = quantile(anth_upperarm, probs = 0.75),
+            iqr = IQR(anth_upperarm))
+
+# Check for normality
+shapiro.test(dat_de_master_endo$anth_upperarm) ## not normally distributed
+
+# Perform ANOVA for age
+model <- lm(anth_upperarm ~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+### ENdotype A vs C 
+
+# Perform Kruskal-Wallis test (due to similarity between distribution of the two groups but abnormal sitributon)
+kruskal_test_result <- kruskal.test(anth_upperarm~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+
+```
+
+WHR 
+```{r}
+
+dat_de_master_endo$anth_Waisthipratio<- as.numeric(dat_de_master_endo$anth_Waisthipratio)
+
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(anth_Waisthipratio),
+            q1 = quantile(anth_Waisthipratio, probs = 0.25),
+            q3 = quantile(anth_Waisthipratio, probs = 0.75),
+            iqr = IQR(anth_Waisthipratio))
+# Check for normality
+
+shapiro.test(dat_de_master_endo$anth_Waisthipratio) # normally distributed
+
+# Perform ANOVA 
+model <- lm(anth_Waisthipratio ~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+### ENdotype A vs C 
+
+# Perform Kruskal-Wallis test (due to similarity between distribution)
+kruskal_test_result <- kruskal.test(anth_Waisthipratio~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+```
+
+WHC
+```{r}
+
+dat_de_master_endo$anth_waist<- as.numeric(dat_de_master_endo$anth_waist)
+
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(anth_waist),
+            q1 = quantile(anth_waist, probs = 0.25),
+            q3 = quantile(anth_waist, probs = 0.75),
+            iqr = IQR(anth_waist))
+# Check for normality
+shapiro.test(dat_de_master_endo$anth_waist)
+
+# Perform ANOVA 
+model <- lm(anth_waist~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+### ENdotype A vs C 
+
+# Perform Kruskal-Wallis test (due to similarity between distribution)
+kruskal_test_result <- kruskal.test(anth_waist~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+```
+
+Smoking
+```{r}
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(Smoking) %>%
+  mutate(percent = n/sum(n) * 100)
+```
+
+Alcohol use
+```{r}
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(Alc_currconsume) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(dat_de_master_endo$Cluster, dat_de_master_endo$Alc_currconsume)$p.value
+print(p_value)
+
+### Endotype A vs C
+# Create a contingency table
+cont_table <- table(subset_data$Cluster, subset_data$Alc_currconsume)
+
+# Perform Fisher's exact test
+fisher_test_result <- fisher.test(cont_table)
+
+# Extract the p-value
+p_value <- fisher_test_result$p.value
+
+print(p_value)
+
+```
+
+BMI
+```{r}
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(anth_bmi),
+            q1 = quantile(anth_bmi, probs = 0.25),
+            q3 = quantile(anth_bmi, probs = 0.75),
+            iqr = IQR(anth_bmi))
+
+# Check for normality
+shapiro.test(dat_de_master_endo$anth_bmi)
+
+# Perform ANOVA 
+model <- lm(anth_bmi~ Cluster, data = dat_de_master_endo)
+anova(model)
+
+## Between endotype A and C
+# Perform Kruskal-Wallis test (due to similarity between distribution of the two groups but abnormal sitributon)
+kruskal_test_result <- kruskal.test(anth_bmi~ Cluster, data = subset_data)
+
+# Extract the p-value
+p_value <- kruskal_test_result$p.value
+
+print(p_value)
+
+
+#### BMI cat proportions
+dat_de_master_endo%>%
+  group_by(Cluster) %>%
+  count(BMI_cat) %>%
+  mutate(percent = n/sum(n) * 100)
+
+
+# Perform Fisher's exact test for proportions
+fisher_result <- fisher.test(table(subset_data$Cluster, subset_data$BMI_cat))
+
+# Extract the p-value from the test result
+p_value <- fisher_result$p.value
+print(p_value)
+
+```
+
+
+##Additional biochemistry tests
+
+Cpeptide
+```{r}
+### I have some missing values I know so I want to ignore those
+unique_Cpeptide <- unique(dat_de_master_endo$Cpeptide)
+print(unique_Cpeptide)
+
+###remove insulin users 
+insulin_cpeptide <- dat_de_master_endo %>%
+  filter(Cpeptide %in% unique_Cpeptide, con_Insulin == "No") ###205
+
+# Remove na
+insulin_cpeptide1 <- insulin_cpeptide %>%
+  filter(!is.na(Cpeptide))#200 IDs
+
+insulin_cpeptide1%>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(Cpeptide, na.rm = TRUE),
+            q1 = quantile(Cpeptide, probs = 0.25, na.rm = TRUE),
+            q3 = quantile(Cpeptide, probs = 0.75, na.rm = TRUE),
+            iqr = IQR(Cpeptide, na.rm = TRUE))
+
+model <- lm(Cpeptide ~ Cluster, data = insulin_cpeptide1)
+anova(model)
+
+
+insulin_cpeptide%>%
+  group_by(dem_sex) %>%
+  summarise(n = n(),
+            median = median(Cpeptide, na.rm = TRUE),
+            q1 = quantile(Cpeptide, probs = 0.25, na.rm = TRUE),
+            q3 = quantile(Cpeptide, probs = 0.75, na.rm = TRUE),
+            iqr = IQR(Cpeptide, na.rm = TRUE))
+
+insulin_cpeptide1 %>%
+  group_by(Cluster) %>%
+  summarise(count_lt_0.2 = sum(Cpeptide < 0.2, na.rm = TRUE),
+            percentage_lt_0.2 = sum(Cpeptide < 0.2, na.rm = TRUE) / n() * 100)
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype B"
+subset_data4 <- insulin_cpeptide1 %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+subset_data4$Cluster
+
+# Perform Fisher's exact test for proportions
+wilcox_result <- wilcox.test(table(subset_data4$Cluster, subset_data4$Cpeptide))
+
+# Extract the p-value from the test result
+p_value <- wilcox_result$p.value
+print(p_value)
+
+
+```
+
+
+Creatinine
+```{r}
+##there are 0 variables in the dataset however; its NA
+dat_de_master_endo$Kreatinine1
+
+dat_de_master_endokre <- dat_de_master_endo %>%
+  filter(!is.na(Kreatinine1))#238
+
+dat_de_master_endokre$Kreatinine1
+
+dat_de_master_endokre %>%
+  mutate(Kreatinine1 = ifelse(Kreatinine1 == 0.00, NA, Kreatinine1)) %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(Kreatinine1, na.rm = TRUE),
+            q1 = quantile(Kreatinine1, probs = 0.25, na.rm = TRUE),
+            q3 = quantile(Kreatinine1, probs = 0.75, na.rm = TRUE),
+            iqr = IQR(Kreatinine1, na.rm = TRUE))
+
+shapiro.test(dat_de_master_endokre$Kreatinine1) #normally distributed
+
+model <- lm(Kreatinine1 ~ Cluster, data = dat_de_master_endokre)
+anova(model)
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype B"
+subset_data5 <- dat_de_master_endokre %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+# Perform Fisher's exact test for proportions
+wilcox_result <- wilcox.test(table(subset_data5$Cluster, subset_data5$Kreatinine1))
+
+# Extract the p-value from the test result
+p_value <- wilcox_result$p.value
+print(p_value)
+```
+
+Uraat
+```{r}
+library(dplyr)
+
+dat_de_master_endo$Uraat
+
+dat_de_master_endoUra <- dat_de_master_endo %>%
+  filter(!is.na(Uraat))#233
+
+dat_de_master_endoUra %>%
+  group_by(Cluster) %>%
+  summarise(n = n(),
+            median = median(Uraat, na.rm = TRUE),
+            q1 = quantile(Uraat, probs = 0.25, na.rm = TRUE),
+            q3 = quantile(Uraat, probs = 0.75, na.rm = TRUE),
+            iqr = IQR(Uraat, na.rm = TRUE))
+
+shapiro.test(dat_de_master_endoUra$Uraat)# normally distributed
+
+model <- lm(Uraat ~ Cluster, data = dat_de_master_endoUra)
+anova(model)
+
+## between endotype A and Endotype C
+# Subset the data for "Endotype A" and "Endotype B"
+subset_data6 <- dat_de_master_endoUra %>%
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+# Perform Fisher's exact test for proportions
+t_result <- t.test(table(subset_data6$Cluster, subset_data6$Kreatinine1))
+
+# Extract the p-value from the test result
+p_value <- t_result$p.value
+print(p_value)
+
+```
+
+### #### distribution of cpeptide and uric acid
+```{r}
+library(ggplot2)
+
+options(repr.plot.width = 8, repr.plot.height = 5)
+
+# Filter missing values
+filtered_data2 <- insulin_cpeptide[complete.cases(insulin_cpeptide$Uraat, insulin_cpeptide$Cpeptide), ]
+str(filtered_data2)
+
+filtered_data2$Cpeptide <- as.numeric(filtered_data2$Cpeptide)
+
+ggplot(filtered_data2, aes(x = Uraat)) +
+  geom_density(alpha = 0.5, color = "seagreen") +
+  geom_density(aes(x = Cpeptide), alpha = 0.5, color = "purple") +
+  geom_vline(xintercept = c(0.46, 0.36), linetype = "dotted", color = "black", size = 0.2) +
+  labs(title = "Density Plot of Uric Acid and C-peptide Levels",
+       x = "Levels",
+       y = "Density") +
+  theme_classic()
+```
+
+
+#### distribution of creatinine levels by sex
+```{r}
+library(ggplot2)
+
+options(repr.plot.width = 8, repr.plot.height = 5)
+
+# Filter missing values
+filtered_data3 <- Metadata_clean1[complete.cases(Metadata_clean1$Kreatinine1), ]
+
+ggplot(filtered_data3, aes(x = Kreatinine1, fill = dem_sex, color = dem_sex)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = c(96, 81), linetype = "dotted", color = "black", size = 0.2) +
+  labs(title = "Density Plot of Creatinine Levels by Sex",
+       x = "Creatinine Levels",
+       y = "Density") +
+  theme_classic()
+```
+
+
+CKD stage
+```{r}
+
+dat_de_master_endo$CKD_Stage
+na_count <- sum(is.na(dat_de_master_endo$CKD_Stage))
+print(na_count)
+
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(CKD_Stage, na.rm = TRUE) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endokre$Cluster, dat_de_master_endokre$CKD_Stage))$p.value
+p_value
+
+dat_de_master_endokre$Kreatinine1
+
+# Perform Fisher's exact test for proportions
+fisher_result <- fisher.test(table(subset_data$Cluster, subset_data$CKD_Stage))
+
+# Extract the p-value from the test result
+p_value <- fisher_result$p.value
+print(p_value)
+```
+
+
+LTBI status
+```{r}
+dat_de_master_endo %>%
+  group_by(Cluster) %>%
+  count(igra_ltbiconf, na.rm = TRUE) %>%
+  mutate(percent = n/sum(n) * 100)
+
+p_value <- chisq.test(table(dat_de_master_endo$Cluster, dat_de_master_endo$igra_ltbiconf))$p.value
+p_value
+
+# Perform Fisher's exact test for proportions
+fisher_result <- fisher.test(table(subset_data$Cluster, subset_data$igra_ltbiconf))
+
+# Extract the p-value from the test result
+p_value <- fisher_result$p.value
+print(p_value)
+```
+
+
