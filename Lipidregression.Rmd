@@ -1,0 +1,2612 @@
+---
+title: "Script for data analysis"
+author: "Lucy Mrema"
+date: "2026-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dat_de_master<- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+colnames(dat_de_master)
+
+
+Lipidomics_merged_data1 <- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Nightingale_downstream_analysis/Lipidomics_merged_data1_numeric.rds")
+
+colnames(Lipidomics_merged_data1)
+
+
+```
+
+
+Inner join/ Merge teh two datasets based on PID
+```{r}
+merged_data <- merge(dat_de_master, Lipidomics_merged_data1, by = "PID", all = FALSE)
+
+View(merged_data)
+head(merged_data)
+
+print(merged_data)
+```
+
+
+Now save the new file with lipids and olink
+```{r}
+# Save the merged dataset
+saveRDS(merged_data, file = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_lipid.rds")
+
+```
+
+Re-open it 
+```{r fig.width=4, fig.height=5}
+dat_de_master_lipid <- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_lipid.rds")
+
+
+library(dplyr)
+
+dat_de_master_lipid %>%
+  group_by(dem_sex) %>%
+  summarise(
+    mean_CFI = mean(CentralFatIndex, na.rm = TRUE),
+    median_CFI = median(CentralFatIndex, na.rm = TRUE),
+    p25_CFI = quantile(CentralFatIndex, 0.25, na.rm = TRUE),
+    p75_CFI = quantile(CentralFatIndex, 0.75, na.rm = TRUE)
+  )
+
+library(ggplot2)
+
+# Create the plot
+ggplot(dat_de_master_lipid, aes(x = CentralFatIndex, fill = dem_sex)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "black") +
+  facet_wrap(~dem_sex, scales = "free_y") +
+  labs(
+    title = "Distribution of Central Fat Index by Sex",
+    x = "Central Fat Index",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("Female" = "#FF69B4", "Male" = "#4682B4"))  # Pink for female, blue for male
+
+# Save it
+ggsave("central_fat_index_histogram.png", plot = p, width = 8, height = 5, dpi = 300)
+
+
+library(ggplot2)
+
+ggplot(dat_de_master_lipid, aes(x = dem_sex, y = CentralFatIndex, fill = dem_sex)) +
+  geom_boxplot(outlier.color = "black", outlier.shape = 10, alpha = 0.7, width = 0.4) +
+  labs(
+    title = "Central Fat Index Distribution by Sex",
+    x = "Sex",
+    y = "Central Fat Index"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("Female" = "#FF69B4", "Male" = "#4682B4")) +
+  theme(legend.position = "none")
+
+```
+
+Load required packages 
+```{r}
+install.packages(c("broom","corpcor","doParallel","ggrepel","glmnet","igraph","magrittr","openxlsx","parallel","pdist","pROC","RColorBrewer","readxl","rsample","tableone","tidyverse"))
+
+```
+
+## Subsetting measurements into categories
+
+```{r}
+# -----------------------------
+# 1. Define biomarker groups by absolute positions in dat_de_master_lipid
+# -----------------------------
+Amino_acids <- grep("^(Ala|Gln|Gly|His)$", colnames(dat_de_master_lipid), value = TRUE)
+Branched_chain_amino_acids <- grep("^(Ile|Leu|Val)$", colnames(dat_de_master_lipid), value = TRUE)
+Aromatic_amino_acids <- grep("^(Phe|Tyr)$", colnames(dat_de_master_lipid), value = TRUE)
+Glycolysis_related_metabolites <- grep("^(Glucose.y|Lactate)$", colnames(dat_de_master_lipid), value = TRUE)
+Inflammation <- grep("^GlycA$", colnames(dat_de_master_lipid), value = TRUE)
+Apolipoproteins <- grep("^(ApoA1|ApoB|ApoB/ApoA1)$", colnames(dat_de_master_lipid), value = TRUE)
+Cholesterol <- grep("^(Total-C|VLDL-C|Clinical.LDL-C|LDL-C)$", colnames(dat_de_master_lipid), value = TRUE)
+Fatty_acids <- grep("^(Total-FA|Omega-3|Omega-6|PUFA|MUFA|SFA|LA|DHA)$", colnames(dat_de_master_lipid), value = TRUE)
+# Remove fatty acid ratios from analysis
+# Fatty_acids_ratios <- grep("(%$|PUFA/MUFA|Omega-6/Omega-3)", colnames(dat_de_master_lipid), value = TRUE)
+Fluid_balance <- grep("^(Citrate|bOHbutyrate|Acetate|Acetoacetate|Acetone|Creatinine|Albumin)$", colnames(dat_de_master_lipid), value = TRUE)
+Triglycerides <- grep("^Total-TG$", colnames(dat_de_master_lipid), value = TRUE)
+
+# -----------------------------
+# 2. Combine all selected biomarkers
+# -----------------------------
+selected_biomarkers <- c(
+  Amino_acids,
+  Branched_chain_amino_acids,
+  Aromatic_amino_acids,
+  Glycolysis_related_metabolites,
+  Inflammation,
+  Apolipoproteins,
+  Cholesterol,
+  Fatty_acids,
+  Fluid_balance,
+  Triglycerides
+)
+
+# -----------------------------
+# 3. Assign group labels to each biomarker
+# -----------------------------
+assign_group <- function(group_name, biomarkers) {
+  setNames(rep(group_name, length(biomarkers)), biomarkers)
+}
+
+biomarker_group <- c(
+  assign_group("Amino acids", Amino_acids),
+  assign_group("Branched-chain amino acids", Branched_chain_amino_acids),
+  assign_group("Aromatic amino acids", Aromatic_amino_acids),
+  assign_group("Glycolysis-related metabolites", Glycolysis_related_metabolites),
+  assign_group("Inflammation", Inflammation),
+  assign_group("Apolipoproteins", Apolipoproteins),
+  assign_group("Cholesterol", Cholesterol),
+  assign_group("Fatty acids", Fatty_acids),
+  assign_group("Fluid balance", Fluid_balance),
+  assign_group("Triglycerides", Triglycerides)
+)
+
+# Remove duplicated biomarker names
+biomarker_group <- biomarker_group[!duplicated(names(biomarker_group))]
+
+# -----------------------------
+# 4. Create annotation dataframe
+# -----------------------------
+annotation_col_full <- data.frame(Group = biomarker_group)
+rownames(annotation_col_full) <- names(biomarker_group)
+
+# Keep only selected & annotated biomarkers
+annotated_biomarkers <- intersect(selected_biomarkers, names(biomarker_group))
+annotation_col <- annotation_col_full[annotated_biomarkers, , drop = FALSE]
+
+# Order annotation dataframe by group
+annotation_col <- annotation_col[order(annotation_col$Group), , drop = FALSE]
+ordered_biomarkers <- rownames(annotation_col)
+# -----------------------------
+# 5. Subset the data for selected biomarkers
+# -----------------------------
+dat_subset <- dat_de_master_lipid[, ordered_biomarkers, drop = FALSE]
+
+# -----------------------------
+# 6. Transpose so rows = biomarkers, cols = patients
+# -----------------------------
+dat_scaled <- t(scale((dat_subset)))
+
+# -----------------------------
+# 8. Load libraries
+# -----------------------------
+library(pheatmap)
+library(RColorBrewer)
+
+# -----------------------------
+# 9. Define annotation for rows (biomarkers)
+# -----------------------------
+annotation_row <- data.frame(`Biomarker group` = annotation_col$Group)
+rownames(annotation_row) <- rownames(annotation_col)
+
+# Define colors for biomarker groups
+group_levels <- unique(annotation_row$`Biomarker group`)
+group_colors <- setNames(colorRampPalette(RColorBrewer::brewer.pal(12, "Set3"))(length(group_levels)),
+                         group_levels)
+ann_colors <- list(`Biomarker group` = group_colors)
+
+
+# -----------------------------
+# 10. Save heatmap as PNG
+# -----------------------------
+png("heatmap_updated.png", width = 20, height = 10, units = "in", res = 150)
+
+pheatmap(
+  dat_scaled,
+  annotation_row = annotation_row,   # annotation by biomarker group
+  annotation_colors = ann_colors,
+  cluster_rows = FALSE,              # keep biomarkers ordered
+  cluster_cols = TRUE,               # cluster patients
+  show_rownames = TRUE,              # show biomarkers
+  show_colnames = TRUE,              # show patients
+  fontsize_row = 10,                   # smaller font for biomarkers
+  fontsize_col = 10,                   # smaller font for patients
+  main = "Z-score Heatmap of Selected Biomarker Groups",
+  border_color = NA,
+  color = colorRampPalette(rev(brewer.pal(11, "RdBu")))(100)
+)
+
+dev.off()
+
+
+```
+>Heatmap annotated
+
+```{r}
+# -----------------------------
+# 1. Define biomarker groups
+# -----------------------------
+biomarker_groups <- list(
+  "Amino acids" = c("Ala","Gln","Gly","His"),
+  "Branched-chain amino acids" = c("Ile","Leu","Val"),
+  "Aromatic amino acids" = c("Phe","Tyr"),
+  "Glycolysis-related metabolites" = c("Glucose.y","Lactate"),
+  "Inflammation" = c("GlycA"),
+  "Apolipoproteins" = c("ApoA1","ApoB","ApoB/ApoA1"),
+  "Cholesterol" = c("Total-C","VLDL-C","Clinical.LDL-C","LDL-C"),
+  "Fatty acids" = c("Total-FA","Omega-3","Omega-6","PUFA","MUFA","SFA","LA","DHA"),
+  "Fluid balance" = c("Citrate","bOHbutyrate","Acetate","Acetoacetate","Acetone","Creatinine","Albumin"),
+  "Triglycerides" = c("Total-TG")
+)
+
+# -----------------------------
+# 2. Map biomarkers to groups
+# -----------------------------
+biomarker_group <- unlist(
+  lapply(names(biomarker_groups), function(g) {
+    matches <- grep(paste0("^(", paste(biomarker_groups[[g]], collapse="|"), ")$"),
+                    colnames(dat_de_master_lipid), value = TRUE)
+    setNames(rep(g, length(matches)), matches)
+  })
+)
+
+# Remove duplicates if any
+biomarker_group <- biomarker_group[!duplicated(names(biomarker_group))]
+
+# -----------------------------
+# 3. Order and subset data
+# -----------------------------
+ordered_biomarkers <- names(sort(biomarker_group))
+dat_subset <- dat_de_master_lipid[, ordered_biomarkers, drop = FALSE]
+
+# -----------------------------
+# 4. Scale biomarkers (z-scores per biomarker)
+# -----------------------------
+dat_scaled <- scale(dat_subset) # rows = biomarkers, columns = patients
+
+# -----------------------------
+# 5. Define row annotations
+# -----------------------------
+annotation_row <- data.frame(`Biomarker group` = biomarker_group[ordered_biomarkers])
+rownames(annotation_row) <- ordered_biomarkers
+
+# Annotation colors
+group_levels <- unique(annotation_col $`Biomarker group`)
+group_colors <- setNames(colorRampPalette(RColorBrewer::brewer.pal(12, "Set3"))(length(group_levels)),
+                         group_levels)
+ann_colors <- list(`Biomarker group` = group_colors)
+
+# -----------------------------
+# 6. Generate heatmap
+# -----------------------------
+library(pheatmap)
+library(RColorBrewer)
+
+png("heatmap_updated.png", width = 20, height = 10, units = "in", res = 150)
+
+
+pheatmap(
+  dat_scaled,
+  annotation_col = annotation_col,   # if rows = patients, columns = biomarkers
+  annotation_colors = ann_colors,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,  # keep biomarkers ordered
+  show_rownames = TRUE,
+  show_colnames = TRUE, 
+  fontsize_row = 10,                   # smaller font for biomarkers
+  fontsize_col = 10,                   # smaller font for patients
+  main = "Z-score Heatmap of Selected Biomarker Groups",
+  border_color = NA,
+  color = colorRampPalette(rev(brewer.pal(11, "RdBu")))(100)
+)
+
+dev.off()
+```
+
+
+Load required packages 
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+library(grid)
+
+# Select all lipid biomarkers columns by absolute position
+all_biomarkers <- colnames(dat_de_master_lipid)[145:381]
+
+# Extract the data matrix for these biomarkers
+lipid_matrix <- dat_de_master_lipid[, all_biomarkers] %>% as.matrix()
+
+# Scale (Z-score) the data by column (biomarker)
+lipid_matrix_z <- scale(lipid_matrix)
+
+# Transpose so lipids are rows and patients are columns
+lipid_matrix_z <- t(lipid_matrix_z)
+
+# Set column names as patient IDs
+if ("PID" %in% colnames(dat_de_master_lipid)) {
+  colnames(lipid_matrix_z) <- dat_de_master_lipid$PID
+}
+
+# Save heatmap
+png("heatmap_lipidscombined.png", width = 16, height = 20, units = "in", res = 150)
+
+# Get 3-class palettes
+reds  <- brewer.pal(3, "YlOrRd")   # yellow → orange → red
+blues <- brewer.pal(3, "PuBu")     # purple → light blue
+
+# Combine: Blue side for negatives, baby yellow for 0, Red side for positives
+my_colors <- c(rev(blues), "#FFFFCC", reds)
+
+pheatmap::pheatmap(
+  mat = lipid_matrix_z,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,   # Lipids
+  show_colnames = TRUE, # Patients
+  cutree_cols = 4,
+  color = colorRampPalette(my_colors)(11),
+  fontsize_col = 4,
+  fontsize_row = 4,
+  main = "Z-score Heatmap of All Lipid Biomarkers",
+  border_color = NA
+)
+
+dev.off()
+
+```
+
+
+I see three meanful clusters 
+```{r}
+png("heatmap_lipidscombinedclusters.png", width = 16, height = 18, units = "in", res = 150)
+
+set.seed(123) 
+
+pheatmap::pheatmap(
+  mat = lipid_matrix_z,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  cutree_rows = 4,
+  color = colorRampPalette(rev(RColorBrewer::brewer.pal(11, "RdBu")))(100),
+  fontsize_col = 4,
+  fontsize_row = 4,
+  main = "Z-score Heatmap of All Lipid Biomarkers 3  clusters",
+  border_color = NA
+)
+
+dev.off()
+
+```
+```{r}
+
+# Loading packages.
+library(psych)
+#library(DESeq2)
+library(ggrepel)
+library(RColorBrewer)
+library(pheatmap)
+#library(limma)
+install.packages("volcano3D")
+library(volcano3D)
+#library(volcano3Ddata)
+library(readxl)
+#install.packages("EnvStats")
+library(EnvStats)
+#install.packages("ggcorrplot")
+library(ggcorrplot)
+library(knitr)
+#install.packages("factoextra")
+library(factoextra)
+#install.packages("OlinkAnalyze")
+library(OlinkAnalyze)
+#install.packages("table1")
+library(table1)
+#install.packages("tidygraph")
+library(tidygraph)
+#install.packages("igraph")
+library(igraph)
+#install.packages("ggraph")
+library(ggraph)
+#install.packages("foreign")
+library(foreign)
+#install.packages("haven")
+library(haven)
+#install.packages("iglu")
+library(iglu)
+library(openxlsx)
+library(CorLevelPlot)
+#install.packages("flashClust")
+library(flashClust)
+#install.packages("cowplot")
+library(cowplot)
+#library(impute)
+#library(WGCNA)
+#install.packages("reshape2")
+library(reshape2)
+#install.packages("fs")
+library(fs)
+library(tidyverse)
+
+```
+
+Load metadata and olink data
+```{r} 
+dat_de_master <- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_lipid.rds")
+colnames(dat_de_master)
+```
+
+Linear regression for Mbeya and Moshi separately
+
+Moshi
+```{r}
+library(dplyr)
+
+dat_de_master <- dat_de_master |> 
+  rename(Site = "Site Abbreviation")
+
+# Subset data for Mos site
+library(dplyr)
+dat_mos <- dat_de_master |> filter(Site == "MOS")
+
+
+# Subset data for Mbe site
+dat_mbe <- dat_de_master |> filter(Site == "MBE")
+
+
+#prepare the data
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value","Site", "dem_sex","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+lipid_markers <- names(dat_mos)[145:381]
+
+# Combine all required variables
+all_vars <- c(predictors, lipid_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_mos))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_mos [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(lipid_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_sex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_sex")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+ 
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 3.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotMOSlipid.png", plot = p, width = 6, height = 30, units = "in",dpi=600)
+
+```
+
+Mbeya 
+
+```{r}
+#prepare the data
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value","Site", "dem_sex","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+lipid_markers <- names(dat_mbe)[145:381]
+
+# Combine all required variables
+all_vars <- c(predictors, lipid_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_mos))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_mbe [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(lipid_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_sex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_sex")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 3.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotMBElipids.png", plot = p, width = 6, height = 30, units = "in", dpi=600)
+```
+
+
+
+By Sex: Male
+```{r}
+
+
+# Subset data for Mos site
+dat_male <- subset(dat_de_master, dem_sex == "Male")
+
+# Subset data for Mbe site
+dat_female <- subset(dat_de_master, dem_sex == "Female")
+
+
+dat_de_master$HbA1c_value
+
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value", "Site","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+lipid_markers <- names(dat_male)[145:381]
+
+# Combine all required variables
+all_vars <- c(predictors, lipid_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_male))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_male [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(lipid_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Site) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Site")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "Site" ~ "Site (Moshi)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+ 
+ 
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 3.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+ggsave("plotMalelipid.png", plot = p, width = 6, height = 30, units = "in")
+
+```
+
+
+By Sex: Female
+```{r}
+
+
+# Subset data for Mos site
+dat_male <- subset(dat_de_master, dem_sex == "Male")
+colnames(dat_male)
+# Subset data for Mbe site
+dat_female <- subset(dat_de_master, dem_sex == "Female")
+
+
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value", "Site","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+lipid_markers <- names(dat_male)[145:381]
+
+# Combine all required variables
+all_vars <- c(predictors, lipid_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_male))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_female [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+library()
+# Convert to long format so we can group by outcome variable
+library(dplyr)
+library(tidyr)
+
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(lipid_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Site) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Site")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "Site" ~ "Site (Moshi)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 3.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotfemalelipids.png", plot = p, width = 6, height = 28, units = "in")
+```
+
+#Comparison between endotypesA and C (Olink data only)
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(ggplot2)
+library(ggrepel)
+
+# Define the comparison
+comparison <- "Endotype A vs Endotype C"
+
+# Select only the biomarker columns and cluster column
+biomarker_data <- dat_de_master_lipid |> 
+  select(63:139, Cluster = 140) |>   # rename column 140 as 'Cluster'
+  filter(Cluster %in% c("Endotype A", "Endotype C"))
+
+colnames(biomarker_data)
+
+# Convert to long format for easier summarization
+long_data <- biomarker_data |> 
+  pivot_longer(
+    cols = 1:77,          # 63:139 = 77 columns
+    names_to = "Biomarker",
+    values_to = "Concentration"
+  ) |> 
+  filter(!is.na(Concentration))
+
+# Summarize mean concentration per biomarker and cluster
+marker_summary <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(mean_conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = mean_conc) |>
+  mutate(
+    diff = `Endotype A` - `Endotype C`,
+    regulation = case_when(
+      diff > 0 ~ "Up in Endotype A",
+      diff < 0 ~ "Up in Endotype C",
+      TRUE ~ "No difference"
+    )
+  )
+
+# View results
+marker_summary
+
+
+# 2. Calculate log2FC
+log2FC_df <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = Mean_Conc) |>
+  mutate(log2FC = log2(`Endotype C` / `Endotype A`))
+
+# 3. Wilcoxon rank-sum test for each biomarker
+p_values <- long_data |>
+  group_by(Biomarker) |>
+  summarise(out = list(wilcox.test(Concentration ~ Cluster, paired = FALSE) |> broom::tidy()), .groups = "drop") |>
+  unnest(cols = c(out))
+
+# 4. Combine log2FC and p-values
+tmp <- log2FC_df |>
+  left_join(p_values, by = "Biomarker") |>
+   ungroup() |>
+  mutate(
+    p.adj = p.adjust(p.value, method = "fdr"),
+    `-log10P` = -log10(p.adj),
+    signif = ifelse(p.adj < 0.05, "Significant", "Non-significant")
+  )
+
+labels <- tmp |> 
+  filter(p.adj < 0.05)
+
+
+# . Define plot limits
+max_l2FC <- max(abs(tmp$log2FC), na.rm = TRUE)
+min_p <- min(tmp$p.adj, na.rm = TRUE)
+
+# plot with making labels infinite and thinner
+tmp |> 
+  ggplot(aes(x = log2FC, y = `-log10P`)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.05), alpha = 0.5, color = "darkred", linetype = 2) +
+  geom_point(aes(color = signif), show.legend = F) +
+  ggrepel::geom_text_repel(data = subset(tmp, signif == "Significant"), # Only label significant dots
+                           aes(label = Biomarker), 
+                           size = 2.5,           # Reduce label size
+                           max.overlaps = Inf,   # Allow all overlaps for significant dots
+                           nudge_x = 0.1,        # Adjust x position for better spacing
+                           nudge_y = 0.1,        # Adjust y position for better spacing
+                           segment.size = 0.2) + # Make connecting lines thinner
+  scale_y_continuous(limits = c(0, -log10(min_p)), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(limits = c(-max_l2FC, max_l2FC)) +
+  scale_color_discrete(limits = c("Significant", "Non-significant"), type = c("red2", "gray")) +
+  labs(title = comparison,
+       y = "-log10(adjusted p-value)",
+       x = "log2FC") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        panel.grid = element_blank())
+
+# Save figure
+ggsave(
+  filename = "Olink_EndotypeC_vs_EndotypeA.png",
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4,
+  width = 4,
+  units = "in"
+)
+
+```
+
+Endotype A vs B 
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(ggplot2)
+library(ggrepel)
+
+# Define the comparison
+comparison <- "Endotype A vs Endotype B"
+
+# Select only the biomarker columns and cluster column
+biomarker_data <- dat_de_master_lipid |> 
+  select(63:139, Cluster = 140) |>   # rename column 140 as 'Cluster'
+  filter(Cluster %in% c("Endotype A", "Endotype B"))
+
+colnames(biomarker_data)
+
+# Convert to long format for easier summarization
+long_data <- biomarker_data |> 
+  pivot_longer(
+    cols = 1:77,          # 63:139 = 77 columns
+    names_to = "Biomarker",
+    values_to = "Concentration"
+  ) |> 
+  filter(!is.na(Concentration))
+
+# Summarize mean concentration per biomarker and cluster
+marker_summary <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(mean_conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = mean_conc) |>
+  mutate(
+    diff = `Endotype A` - `Endotype B`,
+    regulation = case_when(
+      diff > 0 ~ "Up in Endotype A",
+      diff < 0 ~ "Up in Endotype B",
+      TRUE ~ "No difference"
+    )
+  )
+
+# View results
+marker_summary
+
+
+# 2. Calculate log2FC
+log2FC_df <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = Mean_Conc) |>
+  mutate(log2FC = log2(`Endotype B` / `Endotype A`))
+
+# 3. Wilcoxon rank-sum test for each biomarker
+p_values <- long_data |>
+  group_by(Biomarker) |>
+  summarise(out = list(wilcox.test(Concentration ~ Cluster, paired = FALSE) |> broom::tidy()), .groups = "drop") |>
+  unnest(cols = c(out))
+
+# 4. Combine log2FC and p-values
+tmp <- log2FC_df |>
+  left_join(p_values, by = "Biomarker") |>
+   ungroup() |>
+  mutate(
+    p.adj = p.adjust(p.value, method = "fdr"),
+    `-log10P` = -log10(p.adj),
+    signif = ifelse(p.adj < 0.05, "Significant", "Non-significant")
+  )
+
+labels <- tmp |> 
+  filter(p.adj < 0.05)
+
+
+# . Define plot limits
+max_l2FC <- max(abs(tmp$log2FC), na.rm = TRUE)
+min_p <- min(tmp$p.adj, na.rm = TRUE)
+
+# plot with making labels infinite and thinner
+tmp |> 
+  ggplot(aes(x = log2FC, y = `-log10P`)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.05), alpha = 0.5, color = "darkred", linetype = 2) +
+  geom_point(aes(color = signif), show.legend = F) +
+  ggrepel::geom_text_repel(data = subset(tmp, signif == "Significant"), # Only label significant dots
+                           aes(label = Biomarker), 
+                           size = 2.5,           # Reduce label size
+                           max.overlaps = Inf,   # Allow all overlaps for significant dots
+                           nudge_x = 0.1,        # Adjust x position for better spacing
+                           nudge_y = 0.1,        # Adjust y position for better spacing
+                           segment.size = 0.2) + # Make connecting lines thinner
+  scale_y_continuous(limits = c(0, -log10(min_p)), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(limits = c(-max_l2FC, max_l2FC)) +
+  scale_color_discrete(limits = c("Significant", "Non-significant"), type = c("red2", "gray")) +
+  labs(title = comparison,
+       y = "-log10(adjusted p-value)",
+       x = "log2FC") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        panel.grid = element_blank())
+
+# Save figure
+ggsave(
+  filename = "Olink_EndotypeA_vs_EndotypeB.png",
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4,
+  width = 4,
+  units = "in"
+)
+```
+Endotype B VS C 
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(ggplot2)
+library(ggrepel)
+
+# Define the comparison
+comparison <- "Endotype B vs Endotype C"
+
+# Select only the biomarker columns and cluster column
+biomarker_data <- dat_de_master_lipid |> 
+  select(63:139, Cluster = 140) |>   # rename column 140 as 'Cluster'
+  filter(Cluster %in% c("Endotype B", "Endotype C"))
+
+colnames(biomarker_data)
+
+# Convert to long format for easier summarization
+long_data <- biomarker_data |> 
+  pivot_longer(
+    cols = 1:77,          # 63:139 = 77 columns
+    names_to = "Biomarker",
+    values_to = "Concentration"
+  ) |> 
+  filter(!is.na(Concentration))
+
+# Summarize mean concentration per biomarker and cluster
+marker_summary <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(mean_conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = mean_conc) |>
+  mutate(
+    diff = `Endotype B` - `Endotype C`,
+    regulation = case_when(
+      diff > 0 ~ "Up in Endotype B",
+      diff < 0 ~ "Up in Endotype C",
+      TRUE ~ "No difference"
+    )
+  )
+
+# View results
+marker_summary
+
+
+# 2. Calculate log2FC
+log2FC_df <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = Cluster, values_from = Mean_Conc) |>
+  mutate(log2FC = log2(`Endotype B` / `Endotype C`))
+
+# 3. Wilcoxon rank-sum test for each biomarker
+p_values <- long_data |>
+  group_by(Biomarker) |>
+  summarise(out = list(wilcox.test(Concentration ~ Cluster, paired = FALSE) |> broom::tidy()), .groups = "drop") |>
+  unnest(cols = c(out))
+
+# 4. Combine log2FC and p-values
+tmp <- log2FC_df |>
+  left_join(p_values, by = "Biomarker") |>
+   ungroup() |>
+  mutate(
+    p.adj = p.adjust(p.value, method = "fdr"),
+    `-log10P` = -log10(p.adj),
+    signif = ifelse(p.adj < 0.05, "Significant", "Non-significant")
+  )
+
+labels <- tmp |> 
+  filter(p.adj < 0.05)
+
+
+# . Define plot limits
+max_l2FC <- max(abs(tmp$log2FC), na.rm = TRUE)
+min_p <- min(tmp$p.adj, na.rm = TRUE)
+
+# plot with making labels infinite and thinner
+tmp |> 
+  ggplot(aes(x = log2FC, y = `-log10P`)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.05), alpha = 0.5, color = "darkred", linetype = 2) +
+  geom_point(aes(color = signif), show.legend = F) +
+  ggrepel::geom_text_repel(data = subset(tmp, signif == "Significant"), # Only label significant dots
+                           aes(label = Biomarker), 
+                           size = 2.5,           # Reduce label size
+                           max.overlaps = Inf,   # Allow all overlaps for significant dots
+                           nudge_x = 0.1,        # Adjust x position for better spacing
+                           nudge_y = 0.1,        # Adjust y position for better spacing
+                           segment.size = 0.2) + # Make connecting lines thinner
+  scale_y_continuous(limits = c(0, -log10(min_p)), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(limits = c(-max_l2FC, max_l2FC)) +
+  scale_color_discrete(limits = c("Significant", "Non-significant"), type = c("red2", "gray")) +
+  labs(title = comparison,
+       y = "-log10(adjusted p-value)",
+       x = "log2FC") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        panel.grid = element_blank())
+
+# Save figure
+ggsave(
+  filename = "Olink_EndotypeB_vs_EndotypeC.png",
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4,
+  width = 4,
+  units = "in"
+)
+```
+Combined plots
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(ggplot2)
+library(ggrepel)
+
+install.packages("patchwork")
+library(patchwork)   # for combining plots
+
+# Function to generate volcano plot for any two clusters
+make_volcano <- function(data, group1, group2, title) {
+  long_data <- data |>
+    filter(Cluster %in% c(group1, group2)) |>
+    pivot_longer(
+      cols = 1:77,  # biomarker columns
+      names_to = "Biomarker",
+      values_to = "Concentration"
+    ) |> 
+    filter(!is.na(Concentration))
+  
+  # Mean values
+  log2FC_df <- long_data |>
+    group_by(Biomarker, Cluster) |>
+    summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = Cluster, values_from = Mean_Conc) |>
+    mutate(log2FC = log2(.data[[group2]] / .data[[group1]]))
+  
+  # Wilcoxon test
+  p_values <- long_data |>
+    group_by(Biomarker) |>
+    summarise(out = list(wilcox.test(Concentration ~ Cluster, paired = FALSE) |> broom::tidy()),
+              .groups = "drop") |>
+    unnest(cols = c(out))
+  
+  # Merge results
+  tmp <- log2FC_df |>
+    left_join(p_values, by = "Biomarker") |>
+    ungroup() |>
+    mutate(
+      p.adj = p.adjust(p.value, method = "fdr"),
+      `-log10P` = -log10(p.adj),
+      signif = ifelse(p.adj < 0.05, "Significant", "Non-significant")
+    )
+  
+  # Volcano plot
+  max_l2FC <- max(abs(tmp$log2FC), na.rm = TRUE)
+  
+  ggplot(tmp, aes(x = log2FC, y = `-log10P`)) +
+    geom_vline(xintercept = 0, color = "black") +
+    geom_hline(yintercept = -log10(0.05), color = "darkred", linetype = 2, alpha = 0.6) +
+    geom_point(aes(color = signif), size = 2, alpha = 0.7, show.legend = FALSE) +
+    ggrepel::geom_text_repel(
+      data = subset(tmp, signif == "Significant"),
+      aes(label = Biomarker),
+      size = 2.5, max.overlaps = Inf, segment.size = 0.2
+    ) +
+    scale_x_continuous(limits = c(-max_l2FC, max_l2FC)) +
+    scale_color_manual(values = c("Significant" = "red2", "Non-significant" = "gray70")) +
+    labs(title = title, x = "log2FC", y = "-log10(adjusted p-value)") +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5), panel.grid = element_blank())
+}
+
+# Prepare input data
+biomarker_data <- dat_de_master_lipid |>
+  select(63:139, Cluster = 140)   # biomarkers + cluster
+
+# Generate plots
+p1 <- make_volcano(biomarker_data, "Endotype A", "Endotype B", "Endotype A vs B")
+p2 <- make_volcano(biomarker_data, "Endotype B", "Endotype C", "Endotype B vs C")
+p3 <- make_volcano(biomarker_data, "Endotype A", "Endotype C", "Endotype A vs C")
+
+# Combine plots side by side (or in 2x2 grid if you had more)
+combined <- (p1 | p2 | p3)
+
+# Save combined figure
+ggsave(
+  "Olink_EndotypeComparisons.png",
+  combined,
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4, width = 12, units = "in"
+)
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(ggplot2)
+library(ggrepel)
+
+# Function to calculate stats for any pair
+do_comparison <- function(data, g1, g2) {
+  long_data <- data |>
+    filter(Cluster %in% c(g1, g2)) |>
+    pivot_longer(
+      cols = 1:77, 
+      names_to = "Biomarker",
+      values_to = "Concentration"
+    ) |> 
+    filter(!is.na(Concentration))
+  
+  # Mean values
+  log2FC_df <- long_data |>
+    group_by(Biomarker, Cluster) |>
+    summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = Cluster, values_from = Mean_Conc) |>
+    mutate(log2FC = log2(.data[[g2]] / .data[[g1]]))
+  
+  # Wilcoxon test
+  p_values <- long_data |>
+    group_by(Biomarker) |>
+    summarise(out = list(wilcox.test(Concentration ~ Cluster, paired = FALSE) |> broom::tidy()),
+              .groups = "drop") |>
+    unnest(cols = c(out))
+  
+  # Merge results
+  res <- log2FC_df |>
+    left_join(p_values, by = "Biomarker") |>
+    ungroup() |>
+    mutate(
+      p.adj = p.adjust(p.value, method = "fdr"),
+      `-log10P` = -log10(p.adj),
+      signif = ifelse(p.adj < 0.05, "Significant", "Non-significant"),
+      Comparison = paste(g1, "vs", g2)
+    )
+  
+  return(res)
+}
+
+# Prepare input data
+biomarker_data <- dat_de_master_lipid |>
+  select(63:139, Cluster = 140)
+
+# Run all three comparisons
+res_AB <- do_comparison(biomarker_data, "Endotype A", "Endotype B")
+res_BC <- do_comparison(biomarker_data, "Endotype B", "Endotype C")
+res_AC <- do_comparison(biomarker_data, "Endotype A", "Endotype C")
+
+# Combine into one dataset
+all_res <- bind_rows(res_AB, res_BC, res_AC)
+
+# Volcano plot with facets for each comparison
+ggplot(all_res, aes(x = log2FC, y = `-log10P`)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_hline(yintercept = -log10(0.05), color = "darkred", linetype = 2, alpha = 0.6) +
+  geom_point(aes(color = signif), size = 1.8, alpha = 0.7) +
+  ggrepel::geom_text_repel(
+    data = subset(all_res, signif == "Significant"),
+    aes(label = Biomarker),
+    size = 2,
+    max.overlaps = 20,
+    segment.size = 0.2
+  ) +
+  scale_color_manual(values = c("Significant" = "red2", "Non-significant" = "gray70")) +
+  labs(
+    title = "Volcano plot of Endotype Comparisons",
+    x = "log2FC",
+    y = "-log10(adjusted p-value)"
+  ) +
+  facet_wrap(~Comparison, ncol = 3) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.grid = element_blank(),
+    legend.title = element_blank()
+  )
+
+# Save figure
+ggsave(
+  "Olink_All_EndotypeComparisons.png",
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4, width = 12, units = "in"
+)
+
+```
+
+
+### Radial plot for Olink endotypes 
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(ggrepel)
+library(volcano3D) 
+
+#--------------------------------------
+# Step 1: Set phenotype/endotype order
+#--------------------------------------
+# Your biomarker dataset: columns 63–139 = biomarkers, 140 = cluster
+biomarker_data <- dat_de_master|> 
+  select(63:139, Cluster = 140)
+
+# Step 1: Select biomarkers + Cluster
+biomarker_data <- dat_de_master |> 
+  select(63:139, Cluster = 140)
+
+# Ensure Cluster is an ordered factor
+biomarker_data$Cluster <- factor(
+  biomarker_data$Cluster,
+  levels = c("Endotype A", "Endotype B", "Endotype C"),
+  ordered = TRUE
+)
+
+# Step 2: Loop over biomarkers in wide format
+library(dplyr)
+library(tidyr)
+
+biomarker_names <- colnames(biomarker_data)[1:77]  # adjust 63:139 = 77 columns
+
+kruskal_results <- lapply(biomarker_names, function(gene){
+  df <- biomarker_data |> select(Cluster, Value = all_of(gene))
+  
+  # Kruskal-Wallis test
+  kw <- kruskal.test(Value ~ Cluster, data = df)$p.value
+  
+
+ # Pairwise Wilcoxon (reference df$Cluster and df$Value)
+  pw_A_B <- wilcox.test(df$Value[df$Cluster == "Endotype A"],
+                        df$Value[df$Cluster == "Endotype B"])$p.value
+  pw_A_C <- wilcox.test(df$Value[df$Cluster == "Endotype A"],
+                        df$Value[df$Cluster == "Endotype C"])$p.value
+  pw_B_C <- wilcox.test(df$Value[df$Cluster == "Endotype B"],
+                        df$Value[df$Cluster == "Endotype C"])$p.value
+  
+  tibble(
+    Biomarker = gene,
+    Kruskal_result = kw,
+    p.adj_A_vs_B = pw_A_B,
+    p.adj_A_vs_C = pw_A_C,
+    p.adj_B_vs_C = pw_B_C
+  )
+}) |> bind_rows() |> 
+  mutate(
+    Kruskal_result = p.adjust(Kruskal_result, method = "BH"),
+    p.adj_A_vs_B = p.adjust(p.adj_A_vs_B, method = "BH"),
+    p.adj_A_vs_C = p.adjust(p.adj_A_vs_C, method = "BH"),
+    p.adj_B_vs_C = p.adjust(p.adj_B_vs_C, method = "BH")
+  )
+
+kruskal_results
+
+# Step 3: Prepare matrix for volcano plotting
+#--------------------------------------
+tmp <- kruskal_results |> 
+  column_to_rownames("Biomarker") |> 
+  as.matrix()
+
+
+# Add rownames as a column
+biomarker_data <- biomarker_data |> 
+  tibble::rownames_to_column(var = "SampleID")
+
+# Now create test_metadata
+test_metadata <- biomarker_data |> 
+  select(SampleID, Cluster) |> 
+  unique() |> 
+  mutate(Cluster = factor(Cluster, levels = c("Endotype A", "Endotype B", "Endotype C")))
+
+test_matrix <- biomarker_data |> 
+  select(SampleID, all_of(biomarker_names), Cluster) |>  # keep SampleID, biomarkers, Cluster
+  column_to_rownames("SampleID") |>                      # set SampleID as rownames
+  select(-Cluster) |>                                     # remove Cluster (only numeric values)
+  as.matrix()                                            # convert to numeric matrix
+
+
+# Ensure order of biomarkers in tmp matches columns in test_matrix
+tmp1 <- tmp[colnames(test_matrix),]
+
+
+#--------------------------------------
+# Step 5: Generate polar coordinates for volcano
+#--------------------------------------
+test_polar <- polar_coords(outcome = test_metadata$Cluster,
+                            data = test_matrix,
+                            pvals = tmp1)
+
+
+
+#--------------------------------------
+# Step 6: 3D Volcano plot (optional)
+#--------------------------------------
+ volcano3D(test_polar)
+
+#--------------------------------------
+# Step 7: 2D Volcano plot
+#--------------------------------------
+tmp_plot <- radial_ggplot(polar = test_polar)
+ tmp_plot$data <- tmp_plot$data |>
+   rownames_to_column("Gene") |>
+   mutate(Gene = case_when(lab != "ns" ~ Gene),
+          lab = factor(lab, levels = c("ns", "Endotype A", "Endotype B", "Endotype C")))
+
+tmp_plot + 
+   ggrepel::geom_text_repel(aes(label = Gene), size = 3.5,  max.overlaps = 100) +
+   theme(legend.text = element_text(size = 12),
+         legend.position = "bottom")
+
+
+all(colnames(test_matrix) == rownames(tmp1))
+
+levels(test_metadata$Cluster)
+
+write.csv(tmp1, "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/tmp1_results.csv", row.names = TRUE)
+
+
+
+```
+
+```{r}
+library(ggrepel)
+
+p <- ggplot(mean_data, aes(x = angle_rad, y = Mean_Conc)) +
+  geom_vline(data = quadrant_lines, aes(xintercept = angle_rad),
+             color = "black", linetype = "dashed") +
+  geom_point(aes(color = color_group), shape = 19, size = 4, alpha = 0.8) +
+  geom_text_repel(aes(label = Biomarker),
+                  size = 3,
+                  min.segment.length = 0,
+                  segment.color = "gray50") +
+  geom_text(data = endotype_labels,
+            aes(x = angle_rad, y = radius, label = Cluster),
+            inherit.aes = FALSE,
+            size = 4, fontface = "bold") +
+  scale_color_manual(values = c(
+    "Endotype A" = "#2ca02c",
+    "Endotype B" = "#ff7f0e",
+    "Endotype C" = "#d62728",
+    "Non-significant" = "gray70"
+  )) +
+  coord_polar(theta = "x", start = 0) +
+  labs(title = "Radial Quadrant Plot of Biomarkers by Endotype",
+       x = "", y = "Mean Concentration") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid.major = element_line(color = "gray80"),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.position = "bottom"
+  )
+
+print(p)
+
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(broom)
+
+# -----------------------------
+# 1. Prepare data
+# -----------------------------
+long_data <- dat_de_master_lipid |>
+  pivot_longer(
+    cols = 63:139,
+    names_to = "Biomarker",
+    values_to = "Concentration"
+  ) |>
+  filter(!is.na(Concentration))
+
+# Kruskal-Wallis test per biomarker
+kruskal_res <- long_data |>
+  group_by(Biomarker) |>
+  summarise(
+    test = list(kruskal.test(Concentration ~ Cluster) %>% broom::tidy()),
+    .groups = "drop"
+  ) |>
+  unnest(cols = c(test)) |>
+  mutate(
+    p.adj = p.adjust(p.value, method = "fdr"),
+    signif = ifelse(p.adj < 0.05, "Significant", "Non-significant")
+  )
+
+# Mean concentration per biomarker & endotype
+mean_data <- long_data |>
+  group_by(Biomarker, Cluster) |>
+  summarise(Mean_Conc = mean(Concentration, na.rm = TRUE), .groups = "drop") |>
+  left_join(kruskal_res |> select(Biomarker, signif), by = "Biomarker")
+
+# -----------------------------
+# 2. Assign angles for radial layout
+# -----------------------------
+mean_data <- mean_data |>
+  group_by(Cluster) |>
+  mutate(
+    idx = row_number(),
+    angle = case_when(
+      Cluster == "Endotype A" ~ 0 + (idx - 1) * (120 / n()),
+      Cluster == "Endotype B" ~ 120 + (idx - 1) * (120 / n()),
+      Cluster == "Endotype C" ~ 240 + (idx - 1) * (120 / n())
+    ),
+    angle_rad = angle * pi / 180,
+    color_group = factor(
+      ifelse(signif == "Significant", as.character(Cluster), "Non-significant"),
+      levels = c("Endotype A", "Endotype B", "Endotype C", "Non-significant")
+    )
+  ) |>
+  ungroup()
+
+# -----------------------------
+# 3. Quadrant lines and labels
+# -----------------------------
+quadrant_lines <- data.frame(angle_rad = c(0, 120, 240) * pi / 180)
+
+endotype_labels <- data.frame(
+  Cluster = c("Endotype A", "Endotype B", "Endotype C"),
+  angle = c(60, 180, 300),
+  radius = max(mean_data$Mean_Conc) + 0.2
+) |>
+  mutate(angle_rad = angle * pi / 180)
+
+# -----------------------------
+# 4. Radial plot
+# -----------------------------
+p <- ggplot(mean_data, aes(x = angle_rad, y = Mean_Conc)) +
+  geom_vline(data = quadrant_lines, aes(xintercept = angle_rad),
+             color = "black", linetype = "dashed") +
+  geom_point(aes(color = color_group), shape = 19, size = 4, alpha = 0.8) +
+  geom_text(aes(label = Biomarker), color = "black", size = 3, vjust = -0.5, hjust = 0.5) +
+  geom_text(data = endotype_labels,
+            aes(x = angle_rad, y = radius, label = Cluster),
+            inherit.aes = FALSE,
+            size = 4, fontface = "bold") +
+  scale_color_manual(values = c(
+    "Endotype A" = "#2ca02c",
+    "Endotype B" = "#ff7f0e",
+    "Endotype C" = "#d62728",
+    "Non-significant" = "gray70"
+  )) +
+  coord_polar(theta = "x", start = 0) +
+  labs(
+    title = "Radial Quadrant Plot of Biomarkers by Endotype",
+    x = "", y = "Mean Concentration"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid.major = element_line(color = "gray80"),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    legend.position = "bottom"
+  )
+
+# Print plot
+print(p)
+
+# -----------------------------
+# 5. Save figure
+# -----------------------------
+ggsave(
+  "Olink_All_EndotypeComparisons_radial_krus.png",
+  plot = p,
+  path = "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis/Lipidomics/Lipidomics/Figures",
+  height = 4, width = 12, units = "in"
+)
+```
+
+Correlations Olink Vs Nightingale
+```{r}
+library(dplyr)
+
+# Olink: wide format, one row per PID
+olink_cols <- dat_de_master_lipid |> 
+  select(c(1, 63: 139)) 
+
+# Lipids: select PID + required columns
+lipid_cols <- dat_de_master_lipid |> 
+  select(c(1, 145:159, 179, 181:187, 189:195, 205:225))   # includes PID in column 1
+
+merged_df <- inner_join(lipid_cols, olink_cols, by = "PID")
+
+lipid_vars <- colnames(lipid_cols)[-1]  # all lipid variables except PID
+olink_vars <- setdiff(colnames(olink_cols), "PID")  # all olink proteins
+
+merged_df <- merged_df |>
+  mutate(across(all_of(c(lipid_vars, olink_vars)), ~ as.numeric(unlist(.x))))
+
+library(psych)
+library(corrplot)
+
+# Compute correlations: lipids (X) vs Olink (Y)
+cor_res <- psych::corr.test(
+  merged_df[, lipid_vars],
+  merged_df[, olink_vars],
+  method = "spearman",
+  adjust = "fdr",
+  use = "pairwise.complete.obs"
+)
+
+# Extract matrices
+r_mat <- cor_res$r
+p_matadj <- cor_res$p
+
+library(pheatmap)
+
+col_fun <- colorRampPalette(c("blue4", "white", "red4"))
+# Define color palette for correlations
+
+png("Correlation_Lipids_vs_Olink.png", width = 2000, height = 1800, res = 300)
+
+corrplot(as.matrix(r_mat),
+         p.mat = as.matrix(p_mat),
+         method = "color",
+         col = col_fun(200),
+         insig = "label_sig",
+         sig.level = c(0.0001, 0.001, 0.05),
+         pch.cex = 0.7,
+         pch.col = "black",
+         tl.col = "black",      # text label color
+         tl.cex = 0.5,          # reduce axis font size
+         cl.cex = 0.7,          # reduce color legend font size
+         order = "hclust",
+         hclust.method = "complete",
+         addrect = "",
+         main = "Spearman correlation (Lipids vs Olink proteins)")
+
+dev.off()
+
+```
+
+Unadjusted 
+```{r}
+
+library(psych)
+
+cor_res_unadj <- psych::corr.test(
+  x = merged_df[, lipid_vars],
+  y = merged_df[, olink_vars],
+  method = "spearman",
+  adjust = "none",                  # 🔴 correct way to specify unadjusted
+  use = "pairwise.complete.obs"
+)
+
+# Extract matrices
+r_mat <- cor_res_unadj$r            # correlation coefficients
+p_mat_unadj <- cor_res_unadj$p            # RAW (unadjusted) p-values
+
+
+# ============================
+# 2️⃣ Plot and save correlation heatmap
+# ============================
+
+png(
+  filename = "Correlation_Lipids_vs_Olink_UNADJUSTED.png",
+  width = 2000,
+  height = 1800,
+  res = 300
+)
+
+corrplot(
+  r_mat,
+  p.mat = p_mat,
+  method = "color",
+  col = col_fun(200),
+  insig = "label_sig",               # mark insignificant correlations
+  sig.level = c(0.0001, 0.001, 0.05),
+  pch.cex = 0.7,
+  pch.col = "black",
+  tl.col = "black",
+  tl.cex = 0.5,                      # axis label size
+  cl.cex = 0.7,                      # color legend size
+  order = "hclust",
+  hclust.method = "complete",
+  main = "Spearman correlation between lipids and Olink proteins\n(unadjusted p-values)"
+)
+
+dev.off()
+
+p_adj_mat <- matrix(
+  p.adjust(as.vector(p_mat), method = "BH"),
+  nrow = nrow(p_mat),
+  ncol = ncol(p_mat),
+  dimnames = dimnames(p_mat)
+)
+
+# how many significant before vs after?
+sum(p_matadj < 0.05, na.rm = TRUE)
+sum(p_mat_unadj < 0.05, na.rm = TRUE)
+
+plot(
+  as.vector(p_matadj),
+  as.vector(p_mat_unadj),
+  pch = 16,
+  cex = 0.4,
+  xlab = "Raw p-values",
+  ylab = "FDR-adjusted p-values",
+  main = "Effect of FDR correction"
+)
+abline(0, 1, col = "red", lty = 2)
+
+
+
+```
+
+Correlation plot Endotypes plus selected lipids. 
+```{r}
+library(dplyr)
+library(psych)
+library(pheatmap)
+
+# ---- ensure Cluster labels are correct ----
+unique(dat_de_master_lipid$Cluster)
+
+# ---- create analysis data frame ----
+df <- dat_de_master_lipid %>%
+  select(PID, Cluster, all_of(lipid_vars)) %>%
+  mutate(across(all_of(lipid_vars), as.numeric)) %>%
+  mutate(
+    Endotype_A = as.numeric(Cluster == "Endotype A"),
+    Endotype_B = as.numeric(Cluster == "Endotype B"),
+    Endotype_C = as.numeric(Cluster == "Endotype C")
+  )
+
+endotype_vars <- c("Endotype_A", "Endotype_B", "Endotype_C")
+
+# ---- correlation ----
+cor_res <- psych::corr.test(
+  df[, lipid_vars],
+  df[, endotype_vars],
+  method = "spearman",
+  adjust = "fdr",
+  use = "pairwise.complete.obs"
+)
+
+# ---- extract matrices ----
+r_mat <- cor_res$r
+p_mat <- cor_res$p
+sig_mat <- ifelse(p_mat < 0.05, "*", "")
+
+# ---- significance stars (*, **, ***) ----
+sig_mat <- matrix("", nrow = nrow(p_mat), ncol = ncol(p_mat))
+rownames(sig_mat) <- rownames(p_mat)
+colnames(sig_mat) <- colnames(p_mat)
+
+sig_mat[p_mat < 0.05]  <- "*"
+sig_mat[p_mat < 0.01]  <- "**"
+sig_mat[p_mat < 0.001] <- "***"
+
+# ---- nicer column labels ----
+colnames(r_mat) <- gsub("_", " ", colnames(r_mat))
+colnames(sig_mat) <- colnames(r_mat)
+
+# ---- save heatmap ----
+png(
+  filename = "Lipids_vs_Endotypes_A_B_C.png",
+  width = 1000,
+  height = 2400,
+  res = 300
+)
+
+pheatmap(
+  r_mat,
+  color = colorRampPalette(c("blue4", "white", "red4"))(200),
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  display_numbers = sig_mat,
+  number_color = "black",
+  fontsize_row = 6,
+  fontsize_col = 10,
+  main = ""
+)
+
+dev.off()
+
+
+```
+Volcano plot for differences between Male and female Olink
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Olink columns
+olink_cols <- colnames(dat_de_master)[63:139]
+
+results <- lapply(olink_cols, function(prot) {
+
+  df <- dat_de_master %>%
+    select(dem_sex, all_of(prot)) %>%
+    filter(!is.na(dem_sex), !is.na(.data[[prot]]))
+
+  # ensure two groups
+  if (n_distinct(df$dem_sex) < 2) return(NULL)
+
+  # Wilcoxon test
+  pval <- wilcox.test(df[[prot]] ~ df$dem_sex)$p.value
+
+  # Effect size: log2 median difference
+med_male <- median(df[[prot]][df$dem_sex == "Male"], na.rm = TRUE)
+med_fem  <- median(df[[prot]][df$dem_sex == "Female"], na.rm = TRUE)
+
+  log2FC <- log2(med_male / med_fem)
+
+  data.frame(
+    protein = prot,
+    log2FC = log2FC,
+    pvalue = pval
+  )
+})
+
+results_df <- bind_rows(results) %>%
+  mutate(
+    padj = p.adjust(pvalue, method = "BH"),
+    significance = ifelse(padj < 0.05, "Significant", "Not significant"),
+    neglog10_padj = -log10(padj)
+  )
+
+library(ggrepel)
+
+
+ggplot(results_df, aes(x = log2FC, y = neglog10_padj)) +
+  geom_point(aes(color = significance), size = 2, alpha = 0.8) +
+  geom_text_repel(
+    data = subset(results_df, padj < 0.05),
+    aes(label = protein),
+    size = 3,
+    max.overlaps = 20,
+    box.padding = 0.4,
+    point.padding = 0.3,
+    segment.color = "grey50"
+  ) +
+  scale_color_manual(values = c("Significant" = "red",
+                                "Not significant" = "grey")) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "black") +
+  scale_x_continuous(
+    limits = c(-max(abs(results_df$log2FC), na.rm = TRUE),
+                max(abs(results_df$log2FC), na.rm = TRUE))
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Volcano plot: Olink proteins by sex",
+    x = "log2 Median Difference (Male / Female)",
+    y = "-log10 adjusted p-value",
+    color = ""
+  )
+
+ggsave(
+  filename = "volcano_olink_sex.png",
+  plot = last_plot(),
+  width = 8,
+  height = 6,
+  dpi = 300,
+  bg = "white"
+)
+
+```
+
+
+
+
+
+```{r}
+olink_cols <- colnames(dat_de_master)[63:139]
+
+sex_counts <- dat_de_master%>%
+  filter(
+    !is.na(dem_sex),
+    rowSums(!is.na(select(., all_of(olink_cols)))) > 0
+  ) %>%
+  count(dem_sex)
+
+sex_counts
+
+```
+
+
+Correlations 
+```{r}
+# Load packages
+library(GGally)
+library(ggplot2)
+library(dplyr)
+
+# Prepare data
+pair_data <- dat_de_master %>%
+  select(
+    dem_sex,
+    creatinine = Kreatinine1,
+    BMI = anth_bmi,
+    Age = dem_age
+  ) %>%
+  filter(complete.cases(.))
+
+# Define colors for sex
+sex_colors <- c(
+  "Male"   = "#1f78b4",  # blue
+  "Female" = "#fc9272"   # red
+)
+
+# Lower triangle: scatter + loess smooth
+lower_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_point(aes(color = dem_sex), alpha = 0.6, size = 1.5) +
+    geom_smooth(aes(color = dem_sex), method = "loess", se = FALSE) +
+    scale_color_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Diagonal: density plots
+diag_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_density(aes(fill = dem_sex), alpha = 0.5) +
+    scale_fill_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Create the ggpairs plot and assign to an object
+ggpairs(
+  pair_data,
+  columns = 2:4,   # exclude dem_sex
+  lower = list(continuous = lower_fun),
+  diag  = list(continuous = diag_fun))
+
+
+```
+
+Correlations_lactate
+```{r}
+# Load packages
+library(GGally)
+library(ggplot2)
+library(dplyr)
+
+# Prepare data
+pair_data <- dat_de_master_lipid %>%
+  select(
+    dem_sex,
+    Lactate = Lactate,
+    BMI = anth_bmi,
+    Age = dem_age
+  ) %>%
+  filter(complete.cases(.))
+
+# Define colors for sex
+sex_colors <- c(
+  "Male"   = "#1f78b4",  # blue
+  "Female" = "#fc9272"   # red
+)
+
+# Lower triangle: scatter + loess smooth
+lower_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_point(aes(color = dem_sex), alpha = 0.6, size = 1.5) +
+    geom_smooth(aes(color = dem_sex), method = "loess", se = FALSE) +
+    scale_color_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Diagonal: density plots
+diag_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_density(aes(fill = dem_sex), alpha = 0.5) +
+    scale_fill_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Create the ggpairs plot and assign to an object
+ggpairs(
+  pair_data,
+  columns = 2:4,   # exclude dem_sex
+  lower = list(continuous = lower_fun),
+  diag  = list(continuous = diag_fun))
+
+
+
+```
+DM duration
+```{r}
+# Load packages
+library(GGally)
+library(ggplot2)
+library(dplyr)
+
+# Prepare data
+pair_data <- dat_de_master_lipid %>%
+  select(
+    dem_sex,
+    Lactate = Lactate,
+    BMI = anth_bmi,
+    "DM Duration" = dm_dur_in_years,
+  ) %>%
+  filter(complete.cases(.))
+
+# Define colors for sex
+sex_colors <- c(
+  "Male"   = "#1f78b4",  # blue
+  "Female" = "#fc9272"   # red
+)
+
+# Lower triangle: scatter + loess smooth
+lower_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_point(aes(color = dem_sex), alpha = 0.6, size = 1.5) +
+    geom_smooth(aes(color = dem_sex), method = "loess", se = FALSE) +
+    scale_color_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Diagonal: density plots
+diag_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_density(aes(fill = dem_sex), alpha = 0.5) +
+    scale_fill_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Create the ggpairs plot and assign to an object
+ggpairs(
+  pair_data,
+  columns = 2:4,   # exclude dem_sex
+  lower = list(continuous = lower_fun),
+  diag  = list(continuous = diag_fun))
+
+
+
+```
+DM duration and creatininne
+
+
+DM duration
+```{r}
+# Load packages
+library(GGally)
+library(ggplot2)
+library(dplyr)
+
+# Prepare data
+pair_data <- dat_de_master_lipid %>%
+  select(
+    dem_sex,
+    Creatinine = Kreatinine1,
+    BMI = anth_bmi,
+    "DM Duration" = dm_dur_in_years,
+  ) %>%
+  filter(complete.cases(.))
+
+# Define colors for sex
+sex_colors <- c(
+  "Male"   = "#1f78b4",  # blue
+  "Female" = "#fc9272"   # red
+)
+
+# Lower triangle: scatter + loess smooth
+lower_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_point(aes(color = dem_sex), alpha = 0.6, size = 1.5) +
+    geom_smooth(aes(color = dem_sex), method = "loess", se = FALSE) +
+    scale_color_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Diagonal: density plots
+diag_fun <- function(data, mapping, ...) {
+  ggplot(data, mapping) +
+    geom_density(aes(fill = dem_sex), alpha = 0.5) +
+    scale_fill_manual(values = sex_colors) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank()
+    )
+}
+
+# Create the ggpairs plot and assign to an object
+ggpairs(
+  pair_data,
+  columns = 2:4,   # exclude dem_sex
+  lower = list(continuous = lower_fun),
+  diag  = list(continuous = diag_fun))
+
+
+
+```
+

@@ -1,0 +1,1129 @@
+---
+title: "Regression Analysis"
+author: "Lucy Mrema"
+date: "11 Jun 2025"
+format: 
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+editor: source
+---
+
+# Background
+
+This is a part of the linear regression analysis (site, gender, age, BMI, DM duration, HbA1c, IGRA positive and negtive)
+
+```{r setup, message = F, warning = F}
+
+
+# Setting path variable to location of this analysis.
+path1 <- "C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Analysis"
+
+# Setting working directory to path variable.
+setwd(path1)
+
+knitr::opts_chunk$set(message = F, warning = F)
+```
+
+Load metadata and olink data
+```{r} 
+ dat_de_master<- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+colnames(dat_de_master)
+
+library(dplyr)
+
+dat_de_master <- dat_de_master |> 
+  rename(Site = "Site Abbreviation")
+
+dat_de_master$HbA1c_value
+#prepare the data
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value", "Site", "dem_sex","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+inflammatory_markers <- names(dat_de_master)[63:139]
+
+# Combine all required variables
+all_vars <- c(predictors, inflammatory_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_de_master))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_de_master[, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+# Convert categorical variables to factors
+df_sub$`Site` <- as.factor(df_sub$`Site`)
+df_sub$dem_sex <- as.factor(df_sub$dem_sex)
+
+
+levels(df_sub$`Site`)
+levels(df_sub$`dem_sex`)
+
+
+#what this means: MBE = reference group; MOS = 1 if the site is MOS, 0 if it is MBE; Female/igra results (negative): reference group
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(inflammatory_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_sex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_sex")
+ 
+  
+
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ `Site`) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Site")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     #"non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "Site" ~ "Site (Moshi)",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+            TRUE ~ term
+    )
+  )
+ 
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) +
+  scale_size_continuous(range = c(1, 3.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)) +
+  scale_color_manual(values = palette_heatmap , na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 8), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotregressiongeneral.png", plot = p,
+       width = 6, height = 16, units = "in", dpi = 600)
+
+
+```
+
+
+
+Linear regression for Mbeya and Moshi separately
+
+Moshi
+```{r}
+dat_de_master<- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+colnames(dat_de_master)
+
+library(dplyr)
+
+dat_de_master <- dat_de_master |> 
+  rename(Site = "Site Abbreviation")
+
+library(dplyr)
+
+# Subset data for Mos site
+dat_mos <- subset(dat_de_master, Site == "MOS")
+
+# Subset data for Mbe site
+dat_mbe <- subset(dat_de_master, Site == "MBE")
+
+#prepare the data
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value","Site", "dem_sex","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+inflammatory_markers <- names(dat_mos)[63:139]
+
+# Combine all required variables
+all_vars <- c(predictors, inflammatory_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_mos))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_mos [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(inflammatory_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_sex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_sex")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+            TRUE ~ term
+    )
+  )
+ 
+ 
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 2.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotMOS_updated.png", plot = p, width = 6, height = 15, units = "in",dpi = 600)
+
+levels(results_lm$FDR)
+
+```
+
+Mbeya 
+
+```{r}
+#prepare the data
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value","Site", "dem_sex","igra_results","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+inflammatory_markers <- names(dat_mbe)[63:139]
+
+# Combine all required variables
+all_vars <- c(predictors, inflammatory_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_mos))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_mbe [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(inflammatory_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_sex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_sex")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "dem_sex" ~ "Sex (Male)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 2.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotMBE.png", plot = p, width = 6, height = 15, units = "in",dpi = 600)
+```
+
+
+
+By Sex: Male
+```{r}
+
+dat_de_master<- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+colnames(dat_de_master)
+
+library(dplyr)
+dat_de_master <- dat_de_master |> 
+  rename(Site = "Site Abbreviation")
+
+# Subset data for Mos site
+dat_male <- subset(dat_de_master, dem_sex == "Male")
+
+# Subset data for Mbe site
+dat_female <- subset(dat_de_master, dem_sex == "Female")
+
+
+dat_de_master$HbA1c_value
+
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value", "Site","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+inflammatory_markers <- names(dat_male)[63:139]
+
+# Combine all required variables
+all_vars <- c(predictors, inflammatory_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_male))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_male [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(inflammatory_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Site) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Site")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "Site" ~ "Site (Moshi)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+ 
+ 
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 2.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+ggsave("plotMale.png", plot = p, width = 6, height = 15, units = "in", dpi=600)
+
+```
+
+
+By Sex: Female
+```{r}
+
+library(tidyverse)
+ dat_de_master<- readRDS("C:/Users/lmrema/Documents/Local Disk D/Trainings/PhD/Data/Proteomic_Analysis/dat_de_master_endo.rds")
+colnames(dat_de_master)
+
+library(dplyr)
+dat_de_master <- dat_de_master |> 
+  rename(Site = "Site Abbreviation")
+
+# Subset data for Mos site
+dat_male <- subset(dat_de_master, dem_sex == "Male")
+
+# Subset data for Mbe site
+dat_female <- subset(dat_de_master, dem_sex == "Female")
+
+
+dat_de_master$HbA1c_value
+
+#
+# Define predictor variables
+predictors <- c("anth_bmi", "dem_age","HbA1c_value", "Site","dm_dur_in_years", "visceralfat_lev", "Kreatinine1","CentralFatIndex", "body_fat")
+
+# Extract inflammatory marker column names (columns 63 to 139)
+inflammatory_markers <- names(dat_female)[63:139]
+
+# Combine all required variables
+all_vars <- c(predictors, inflammatory_markers)
+
+# Check if all variables exist in the dataset
+missing <- setdiff(all_vars, names(dat_female))
+if (length(missing) > 0) {
+  stop("Missing variables: ", paste(missing, collapse = ", "))
+}
+
+# Subset and clean the data
+df_sub <- dat_female [, all_vars]
+
+df_sub$HbA1c_value[df_sub$HbA1c_value == -99] <- NA
+
+# Example data frame
+df_sub <- df_sub
+
+
+# Load broom for tidy model output
+library(broom)
+library(dplyr)
+library(tidyr)
+
+
+# Convert to long format so we can group by outcome variable
+df_long <- df_sub |> 
+  pivot_longer(cols = all_of(inflammatory_markers), 
+               names_to = "marker", 
+               values_to = "NPX")
+
+# Run regression grouped by each marker (like your `results_lm1`)
+results_lm1 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ anth_bmi) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)  |>
+    mutate(term = "anth_bmi")
+  
+
+results_lm2 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dem_age) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dem_age")
+
+results_lm3 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ dm_dur_in_years) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "dm_dur_in_years")
+
+
+results_lm4 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ HbA1c_value) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "HbA1c_value")
+
+results_lm5 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ CentralFatIndex) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "CentralFatIndex")
+
+results_lm6 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~visceralfat_lev ) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "visceralfat_lev")
+
+results_lm7 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Kreatinine1) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Kreatinine1")
+
+results_lm8 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ body_fat) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "body_fat")
+
+
+results_lm9 <- df_long |> 
+  group_by(marker) |> 
+  summarize(
+    out = list(lm(NPX ~ Site) |> broom::tidy()),
+    .groups = "drop"
+  ) |> 
+  unnest(out)|> 
+ mutate(term = "Site")
+
+results_lm <- rbind(results_lm1, results_lm2, results_lm3, results_lm4,results_lm5,results_lm6,results_lm7, results_lm8, results_lm9) |> 
+  filter(term != "(Intercept)") |> 
+  select(-std.error, -statistic) |> 
+  mutate(abs_estimate = abs(estimate),
+         direction = estimate / abs_estimate,
+         p.adj = p.adjust(p.value, method = "fdr"),
+         log10_p_value_and_direction = -log10(p.adj) * direction,
+         FDR = cut(log10_p_value_and_direction, 
+                   breaks =c(-35, -6, -4, -2.301, -2, -1.301, 1, 1.301, 2, 2.301, 4, 6, 35),
+                   labels =c("<0.000001 (neg)", "<0.0001 (neg)", "<0.005 (neg)", "<0.01 (neg)", "<0.05 (neg)", "0", "0",
+                             "<0.05 (pos)", "<0.01 (pos)", "<0.005 (pos)", "<0.0001 (pos)", "<0.000001 (pos)")))
+
+# Creating bubble plot.
+palette_heatmap <- c("<0.000001 (pos)"="#800026",
+                     "<0.0001 (pos)"="#BD0026",
+                     "<0.005 (pos)"="#E31A1C",
+                     "<0.01 (pos)"="#FC4E2A",
+                     "<0.05 (pos)"="#FD8D3C",
+                     "non-signif (pos)"="khaki1",
+                     "non-signif"="white", 
+                     "non-signif (neg)"="lightcyan",
+                     "<0.05 (neg)"="#6BAED6",
+                     "<0.01 (neg)"="#4292C6",
+                     "<0.005 (neg)"="#2171B5",
+                     "<0.0001 (neg)"="#08519C",
+                     "<0.000001 (neg)"="#08306B")
+
+
+ results_lm <- results_lm |> 
+  mutate(
+    marker = factor(marker, levels = rev(unique(marker))),
+    term = case_when(
+      term == "anth_bmi" ~ "BMI",
+      term == "dem_age" ~ "Age",
+      term == "HbA1c_value" ~ "HbA1c",
+      term == "dm_dur_in_years" ~ "DM duration",
+      term == "Site" ~ "Site (Moshi)",
+      term == "Kreatinine1" ~ "Creatinine",
+      term == "visceralfat_lev" ~ "Visceral Fat",
+      term == "CentralFatIndex" ~ "Central Fat",
+      term == "body_fat" ~ "Total Fat",
+      TRUE ~ term
+    )
+  )
+
+
+# Plot bubble plot
+library(ggplot2)
+
+ p <-ggplot( data = results_lm, aes(x = term, 
+             y = marker, 
+             size = abs_estimate, 
+             color = FDR)) + 
+  geom_point(shape = 15) + 
+  scale_size_continuous(range = c(1, 2.5), breaks = c(0.1, 0.5, 1 , 2, 3, 4, 5, 6,7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 )) +
+  scale_color_manual(values = palette_heatmap, na.value = "grey90") +
+  labs(size = "Effect size\n(absolute)") + 
+  #facet_grid(~ Phenotype, scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 0, size = 10), # changing metadata text size
+        axis.text.y = element_text(size = 10),  # changing y axis text size (proteins)
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10), 
+        legend.key.size = unit(0.3, "line"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(), 
+        panel.background = element_rect(fill = "gainsboro"),
+        panel.grid = element_blank(),      
+        strip.text.y = element_text(size = 5), # changing facet grid text size
+        strip.text.x = element_text(size = 10), # changing phenotype text size 
+        strip.placement = "outside") + # for placing the strip outside of the axis names
+  scale_x_discrete(position = "top")
+
+
+ggsave("plotfemale.png", plot = p, width = 6, height = 15, units = "in", dpi=600)
+```
